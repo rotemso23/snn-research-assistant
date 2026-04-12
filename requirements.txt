@@ -1,0 +1,11 @@
+langchain
+langchain-community
+langchain-chroma
+langchain-huggingface
+langchain-anthropic
+sentence-transformers
+chromadb
+anthropic
+streamlit
+pypdf
+python-dotenv
