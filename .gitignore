@@ -1,5 +1,6 @@
 papers/
 .env
+CLAUDE_PRIVATE.md
 __pycache__/
 *.pyc
 *.pyo
