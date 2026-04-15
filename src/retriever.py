@@ -94,14 +94,12 @@ def retrieve(query: str, k: int = DEFAULT_K) -> list[Document]:
     and they degrade both retrieval ranking and generated answers.
     """
     vectorstore = _get_vectorstore()
-    # Fetch extra candidates so filtering doesn't reduce the final count too much.
     retriever = vectorstore.as_retriever(
         search_type="mmr",
-        search_kwargs={"k": k * 2, "fetch_k": k * 6, "lambda_mult": 0.7},
+        search_kwargs={"k": k, "fetch_k": k * 3, "lambda_mult": 0.7},
     )
     docs = retriever.invoke(query)
-    filtered = [doc for doc in docs if not _is_hebrew_dominant(doc.page_content)]
-    return filtered[:k]
+    return [doc for doc in docs if not _is_hebrew_dominant(doc.page_content)]
 
 
 def _generate_query_variants(question: str, n: int = 2) -> list[str]:
