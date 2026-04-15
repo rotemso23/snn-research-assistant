@@ -39,7 +39,8 @@ with st.sidebar:
 def load_pipeline():
     """Warm up the embedding model and vectorstore once on app start."""
     from src.retriever import _get_vectorstore
-    _get_vectorstore()
+    vs = _get_vectorstore()
+    return vs._collection.count()
 
 
 # --- Main UI ---
@@ -53,7 +54,10 @@ if not os.getenv("ANTHROPIC_API_KEY"):
     )
     st.stop()
 
-load_pipeline()
+chunk_count = load_pipeline()
+
+with st.sidebar:
+    st.caption(f"DB: {chunk_count} chunks loaded")
 
 with st.form("question_form"):
     question = st.text_input(

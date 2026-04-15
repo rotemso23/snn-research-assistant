@@ -1,10 +1,11 @@
-langchain
-langchain-community
-langchain-chroma
-langchain-huggingface
-langchain-anthropic
+langchain==1.2.15
+langchain-community==0.4.1
+langchain-chroma==1.1.0
+langchain-huggingface==1.2.1
+langchain-anthropic==1.4.0
+langchain-text-splitters==1.1.1
 sentence-transformers
-chromadb
+chromadb==1.5.7
 anthropic
 streamlit
 pypdf
