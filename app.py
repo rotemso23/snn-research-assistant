@@ -38,9 +38,12 @@ with st.sidebar:
 @st.cache_resource
 def load_pipeline():
     """Warm up the embedding model and vectorstore once on app start."""
-    from src.retriever import _get_vectorstore
+    from src.retriever import _get_vectorstore, retrieve
     vs = _get_vectorstore()
-    return vs._collection.count()
+    count = vs._collection.count()
+    # Quick smoke-test: plain MMR retrieval with no filters
+    test_chunks = retrieve("spiking neural network", k=5)
+    return count, len(test_chunks)
 
 
 # --- Main UI ---
@@ -54,10 +57,11 @@ if not os.getenv("ANTHROPIC_API_KEY"):
     )
     st.stop()
 
-chunk_count = load_pipeline()
+chunk_count, test_retrieved = load_pipeline()
 
 with st.sidebar:
     st.caption(f"DB: {chunk_count} chunks loaded")
+    st.caption(f"Retrieval test: {test_retrieved}/5 chunks")
 
 with st.form("question_form"):
     question = st.text_input(
