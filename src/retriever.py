@@ -54,14 +54,49 @@ def _get_cross_encoder() -> CrossEncoder:
 
 
 
-def retrieve(query: str, k: int = DEFAULT_K) -> list[Document]:
-    """Retrieve the top-k most relevant chunks using MMR for diversity."""
+def _is_hebrew_dominant(text: str, threshold: float = 0.2) -> bool:
+    """Return True if more than `threshold` fraction of letters are Hebrew."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    hebrew = sum(1 for c in letters if "\u05d0" <= c <= "\u05ea")
+    return hebrew / len(letters) > threshold
+
+
+def retrieve_from_source(query: str, source_substring: str, k: int = 10) -> list[Document]:
+    """Retrieve top-k chunks from documents whose source path contains `source_substring`.
+
+    ChromaDB metadata filters are unreliable through the LangChain wrapper, so we
+    over-fetch and post-filter by source. Used to guarantee thesis representation
+    when generic MMR is dominated by other papers. Hebrew chunks are also removed.
+    """
     vectorstore = _get_vectorstore()
+    # Fetch broadly — we need enough results to guarantee k after source filtering.
+    results = vectorstore.similarity_search(query, k=200)
+    filtered = [
+        doc for doc in results
+        if source_substring.lower() in doc.metadata.get("source", "").lower()
+        and not _is_hebrew_dominant(doc.page_content)
+    ]
+    return filtered[:k]
+
+
+def retrieve(query: str, k: int = DEFAULT_K) -> list[Document]:
+    """Retrieve the top-k most relevant chunks using MMR for diversity.
+
+    Hebrew-dominant chunks (e.g. a Hebrew abstract in an otherwise-English
+    thesis) are filtered out — the English embedding model embeds them poorly
+    and they degrade both retrieval ranking and generated answers.
+    """
+    vectorstore = _get_vectorstore()
+    # Fetch extra candidates so filtering doesn't reduce the final count too much.
     retriever = vectorstore.as_retriever(
         search_type="mmr",
-        search_kwargs={"k": k, "fetch_k": k * 3, "lambda_mult": 0.7},
+        search_kwargs={"k": k * 2, "fetch_k": k * 6, "lambda_mult": 0.7},
     )
-    return retriever.invoke(query)
+    docs = retriever.invoke(query)
+    filtered = [doc for doc in docs if not _is_hebrew_dominant(doc.page_content)]
+    return filtered[:k]
 
 
 def _generate_query_variants(question: str, n: int = 2) -> list[str]:
@@ -110,6 +145,9 @@ def _generate_hypothetical_answer(question: str) -> str:
 
 
 
+_THESIS_KEYWORDS = {"thesis", "your work", "your paper", "this work", "rotem", "solomon"}
+
+
 def retrieve_and_rerank(
     query: str,
     fetch_k: int = 15,
@@ -147,12 +185,41 @@ def retrieve_and_rerank(
         retrieval_query = _generate_hypothetical_answer(query) if use_hyde else query
         candidates = retrieve(retrieval_query, k=fetch_k)
 
+    # When the query is clearly about the thesis itself, guarantee thesis chunks
+    # are in the candidate pool — generic MMR often fills the pool with other papers.
+    query_lower = query.lower()
+    thesis_guaranteed: list[Document] = []
+    if any(kw in query_lower for kw in _THESIS_KEYWORDS):
+        seen_keys = {doc.page_content[:200] for doc in candidates}
+        thesis_boost = retrieve_from_source(query, "thesis", k=10)
+        for doc in thesis_boost:
+            key = doc.page_content[:200]
+            if key not in seen_keys:
+                candidates.append(doc)
+                seen_keys.add(key)
+        # Pin the top-3 thesis chunks into the final result so the CrossEncoder
+        # cannot displace them entirely in favour of other papers.
+        thesis_guaranteed = thesis_boost[:3]
+
     ce = _get_cross_encoder()
     # Always rerank against the original question, not the hypothetical.
     pairs = [[query, doc.page_content] for doc in candidates]
     scores = ce.predict(pairs)
     ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-    return [doc for _, doc in ranked[:top_k]]
+    top = [doc for _, doc in ranked[:top_k]]
+
+    # Merge guaranteed thesis chunks: add any that didn't make the cut, replacing
+    # the lowest-ranked slots so total count stays at top_k.
+    if thesis_guaranteed:
+        top_keys = {doc.page_content[:200] for doc in top}
+        for doc in thesis_guaranteed:
+            if doc.page_content[:200] not in top_keys and len(top) >= top_k:
+                top.pop()  # drop lowest-ranked (last after sort)
+            if doc.page_content[:200] not in top_keys:
+                top.append(doc)
+                top_keys.add(doc.page_content[:200])
+
+    return top
 
 
 if __name__ == "__main__":

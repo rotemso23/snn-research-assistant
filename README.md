@@ -49,6 +49,19 @@ User question
          │
          ▼
 ┌─────────────────────┐
+│  Hebrew filter      │   Drops chunks where >20% of letters are
+│                     │   Hebrew (thesis has a Hebrew abstract)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  Thesis boost       │   If query mentions "thesis"/"this work"/etc.,
+│                     │   source-filtered retrieval pins top-3 thesis
+│                     │   chunks into the result set
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
 │  CrossEncoder       │   ms-marco-MiniLM-L-6-v2
 │  Reranker           │   top_k=7 chunks selected from merged pool
 └────────┬────────────┘
@@ -104,6 +117,8 @@ Four configurations compared — each adding one optimization on top of the prev
 - **Chunk size 800 → 1400 chars** — splits at paragraph boundaries instead of mid-sentence, improving chunk coherence and faithfulness
 - **HyDE (Hypothetical Document Embeddings)** — Claude generates a plausible answer before retrieval; its embedding aligns better with paper language than the raw question, improving recall and answer relevancy
 - **Multi-Query retrieval** — Claude generates 2 alternative phrasings of each question; candidates from all 3 queries are merged and reranked together, fixing hard retrieval misses where the original phrasing embeds far from the relevant chunks (context recall +15%)
+- **Hebrew chunk filtering** — the thesis includes a Hebrew abstract; the English-only embedding model (`bge-large-en-v1.5`) embeds Hebrew text poorly, causing it to surface irrelevantly. Chunks where >20% of letters are Hebrew are dropped post-retrieval, removing noise without affecting English content
+- **Thesis-targeted retrieval boost** — for queries about "the thesis"/"this work"/etc., generic MMR is dominated by other papers in the corpus. A source-filtered similarity search retrieves the most relevant thesis chunks directly, and the top-3 are pinned into the final result so the CrossEncoder cannot displace them entirely
 - **Domain-augmented fallback** — when HyDE + CrossEncoder returns "I don't know", the pipeline appends domain terms ("spiking neural network thesis") to the question and retries with plain MMR; this shifts the embedding toward the thesis's own structural chunks (ToC, section headers) which contain those terms, fixing structural questions like "what models were developed?"
 
 ---
@@ -117,7 +132,7 @@ snn-research-assistant/
 ├── requirements-eval.txt   ← Evaluation-only dependencies
 ├── src/
 │   ├── ingest.py           ← PDF loading, chunking, embedding, storing in Chroma
-│   ├── retriever.py        ← Multi-Query + HyDE + MMR retrieval + CrossEncoder reranking
+│   ├── retriever.py        ← Multi-Query + HyDE + MMR retrieval + Hebrew filter + thesis boost + CrossEncoder reranking
 │   ├── generator.py        ← Claude API call with retrieved context + citations
 │   ├── pipeline.py         ← ask(question) → {answer, sources}
 │   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query flags)

@@ -48,6 +48,8 @@ snn-research-assistant/
 | Chunk overlap | 200 |
 | Query expansion | HyDE + Multi-Query (2 variants, 3 queries total) |
 | Retrieval | MMR, fetch_k=20 per query |
+| Hebrew filter | Chunks where >20% of letters are Hebrew are dropped post-retrieval (thesis has a Hebrew abstract) |
+| Thesis boost | Queries containing "thesis"/"this work"/etc. trigger a source-filtered retrieval; top-3 thesis chunks are pinned into the final result |
 | Reranking | CrossEncoder, top_k=7 from merged pool |
 | Generation | max_tokens=1024, answers only from provided context |
 | Fallback | If generation returns "I don't know", retries with domain-augmented query + plain MMR (no HyDE, no CrossEncoder) |
