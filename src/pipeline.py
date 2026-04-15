@@ -3,7 +3,7 @@ pipeline.py — End-to-end RAG pipeline: retrieval + generation.
 """
 
 from dotenv import load_dotenv
-from src.retriever import retrieve_and_rerank
+from src.retriever import retrieve, retrieve_and_rerank
 from src.generator import generate
 
 load_dotenv()
@@ -28,10 +28,11 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
     chunks = retrieve_and_rerank(question, fetch_k=20, top_k=k, use_hyde=use_hyde, multi_query=multi_query)
     result = generate(question, chunks)
 
-    # Fallback: HyDE + CrossEncoder can miss structural chunks (e.g. ToC entries).
-    # If the answer signals no context was found, retry with plain MMR retrieval.
+    # Fallback: HyDE + CrossEncoder can miss structural chunks (e.g. ToC entries)
+    # because the CrossEncoder down-ranks navigation content. Retry with plain MMR
+    # (no HyDE, no CrossEncoder) which surfaces these chunks reliably.
     if "does not contain enough information" in result["answer"]:
-        chunks = retrieve_and_rerank(question, fetch_k=20, top_k=k, use_hyde=False, multi_query=False)
+        chunks = retrieve(question, k=k)
         result = generate(question, chunks)
 
     return result
