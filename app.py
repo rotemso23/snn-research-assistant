@@ -41,9 +41,11 @@ def load_pipeline():
     from src.retriever import _get_vectorstore, retrieve
     vs = _get_vectorstore()
     count = vs._collection.count()
-    # Quick smoke-test: plain MMR retrieval with no filters
-    test_chunks = retrieve("spiking neural network", k=5)
-    return count, len(test_chunks)
+    # Test 1: raw similarity_search — no MMR, no Hebrew filter
+    raw_docs = vs.similarity_search("spiking neural network", k=5)
+    # Test 2: full retrieve() — MMR + Hebrew filter
+    filtered_docs = retrieve("spiking neural network", k=5)
+    return count, len(raw_docs), len(filtered_docs)
 
 
 # --- Main UI ---
@@ -57,11 +59,12 @@ if not os.getenv("ANTHROPIC_API_KEY"):
     )
     st.stop()
 
-chunk_count, test_retrieved = load_pipeline()
+chunk_count, raw_retrieved, filtered_retrieved = load_pipeline()
 
 with st.sidebar:
     st.caption(f"DB: {chunk_count} chunks loaded")
-    st.caption(f"Retrieval test: {test_retrieved}/5 chunks")
+    st.caption(f"Raw search: {raw_retrieved}/5 chunks")
+    st.caption(f"After Hebrew filter: {filtered_retrieved}/5 chunks")
 
 with st.form("question_form"):
     question = st.text_input(
