@@ -50,6 +50,12 @@ def generate(question: str, chunks: list[Document]) -> dict:
     Returns:
         {"answer": str, "sources": list[str]}
     """
+    if not chunks:
+        return {
+            "answer": "I don't know — the provided context does not contain enough information to answer this question.",
+            "sources": [],
+        }
+
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise EnvironmentError("ANTHROPIC_API_KEY not set. Check your .env file.")

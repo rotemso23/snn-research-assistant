@@ -71,8 +71,13 @@ def retrieve_from_source(query: str, source_substring: str, k: int = 10) -> list
     when generic MMR is dominated by other papers. Hebrew chunks are also removed.
     """
     vectorstore = _get_vectorstore()
-    # Fetch broadly — we need enough results to guarantee k after source filtering.
-    results = vectorstore.similarity_search(query, k=200)
+    try:
+        # Use the collection count so we never request more than what exists.
+        total = vectorstore._collection.count()
+        fetch_n = min(total, max(k * 8, 50))
+        results = vectorstore.similarity_search(query, k=fetch_n)
+    except Exception:
+        return []
     filtered = [
         doc for doc in results
         if source_substring.lower() in doc.metadata.get("source", "").lower()

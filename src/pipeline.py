@@ -32,7 +32,7 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
     # headers) because natural-language questions don't embed close to navigation
     # content. Augmenting with domain terms ("spiking neural network thesis") shifts
     # the embedding toward the thesis's own structural chunks.
-    if "does not contain enough information" in result["answer"]:
+    if "does not contain enough information" in result["answer"] or not result["sources"]:
         augmented = question + " spiking neural network thesis"
         chunks = retrieve(augmented, k=15)
         result = generate(question, chunks)
