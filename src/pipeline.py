@@ -26,7 +26,15 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
         {"answer": str, "sources": list[str]}
     """
     chunks = retrieve_and_rerank(question, fetch_k=20, top_k=k, use_hyde=use_hyde, multi_query=multi_query)
-    return generate(question, chunks)
+    result = generate(question, chunks)
+
+    # Fallback: HyDE + CrossEncoder can miss structural chunks (e.g. ToC entries).
+    # If the answer signals no context was found, retry with plain MMR retrieval.
+    if "does not contain enough information" in result["answer"]:
+        chunks = retrieve_and_rerank(question, fetch_k=20, top_k=k, use_hyde=False, multi_query=False)
+        result = generate(question, chunks)
+
+    return result
 
 
 if __name__ == "__main__":
