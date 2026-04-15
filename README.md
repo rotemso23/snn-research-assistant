@@ -60,9 +60,9 @@ User question
 └────────┬────────────┘
          │
          ▼
-  "I don't know"? ──► Fallback: retry with plain MMR (no HyDE)
-         │                       bypasses CrossEncoder bias on
-         │                       structural chunks (ToC, listings)
+  "I don't know"? ──► Fallback: augment query with domain terms,
+         │                       retry with plain MMR (no HyDE, no CrossEncoder)
+         │                       surfaces ToC/structural chunks reliably
          ▼
   Answer + Sources
 ```
@@ -104,7 +104,7 @@ Four configurations compared — each adding one optimization on top of the prev
 - **Chunk size 800 → 1400 chars** — splits at paragraph boundaries instead of mid-sentence, improving chunk coherence and faithfulness
 - **HyDE (Hypothetical Document Embeddings)** — Claude generates a plausible answer before retrieval; its embedding aligns better with paper language than the raw question, improving recall and answer relevancy
 - **Multi-Query retrieval** — Claude generates 2 alternative phrasings of each question; candidates from all 3 queries are merged and reranked together, fixing hard retrieval misses where the original phrasing embeds far from the relevant chunks (context recall +15%)
-- **Plain-MMR fallback** — when HyDE + CrossEncoder reranking returns "I don't know", the pipeline retries with simple MMR retrieval; fixes structural questions (e.g. "what models were developed?") where the CrossEncoder down-ranks table-of-contents chunks that don't resemble MS MARCO answer passages
+- **Domain-augmented fallback** — when HyDE + CrossEncoder returns "I don't know", the pipeline appends domain terms ("spiking neural network thesis") to the question and retries with plain MMR; this shifts the embedding toward the thesis's own structural chunks (ToC, section headers) which contain those terms, fixing structural questions like "what models were developed?"
 
 ---
 

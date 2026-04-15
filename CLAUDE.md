@@ -50,7 +50,7 @@ snn-research-assistant/
 | Retrieval | MMR, fetch_k=20 per query |
 | Reranking | CrossEncoder, top_k=7 from merged pool |
 | Generation | max_tokens=1024, answers only from provided context |
-| Fallback | If generation returns "I don't know", retries with plain MMR (no HyDE) |
+| Fallback | If generation returns "I don't know", retries with domain-augmented query + plain MMR (no HyDE, no CrossEncoder) |
 
 ## Running locally
 
