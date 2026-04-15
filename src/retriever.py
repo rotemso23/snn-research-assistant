@@ -53,6 +53,7 @@ def _get_cross_encoder() -> CrossEncoder:
     return _cross_encoder
 
 
+
 def retrieve(query: str, k: int = DEFAULT_K) -> list[Document]:
     """Retrieve the top-k most relevant chunks using MMR for diversity."""
     vectorstore = _get_vectorstore()
@@ -106,6 +107,7 @@ def _generate_hypothetical_answer(question: str) -> str:
         messages=[{"role": "user", "content": question}],
     )
     return response.content[0].text.strip()
+
 
 
 def retrieve_and_rerank(

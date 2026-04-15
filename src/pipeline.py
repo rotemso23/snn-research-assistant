@@ -28,11 +28,13 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
     chunks = retrieve_and_rerank(question, fetch_k=20, top_k=k, use_hyde=use_hyde, multi_query=multi_query)
     result = generate(question, chunks)
 
-    # Fallback: HyDE + CrossEncoder can miss structural chunks (e.g. ToC entries)
-    # because the CrossEncoder down-ranks navigation content. Retry with plain MMR
-    # (no HyDE, no CrossEncoder) which surfaces these chunks reliably.
+    # Fallback: HyDE + CrossEncoder misses structural chunks (ToC entries, section
+    # headers) because natural-language questions don't embed close to navigation
+    # content. Augmenting with domain terms ("spiking neural network thesis") shifts
+    # the embedding toward the thesis's own structural chunks.
     if "does not contain enough information" in result["answer"]:
-        chunks = retrieve(question, k=15)
+        augmented = question + " spiking neural network thesis"
+        chunks = retrieve(augmented, k=15)
         result = generate(question, chunks)
 
     return result
