@@ -32,7 +32,7 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
     # because the CrossEncoder down-ranks navigation content. Retry with plain MMR
     # (no HyDE, no CrossEncoder) which surfaces these chunks reliably.
     if "does not contain enough information" in result["answer"]:
-        chunks = retrieve(question, k=k)
+        chunks = retrieve(question, k=15)
         result = generate(question, chunks)
 
     return result
