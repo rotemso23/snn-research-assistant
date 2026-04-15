@@ -169,6 +169,13 @@ To add your own papers:
 venv/Scripts/python src/ingest.py --papers_dir papers/
 ```
 
+To run the RAGAS evaluation:
+```bash
+venv/Scripts/python -m pip install -r requirements-eval.txt
+venv/Scripts/python src/evaluate.py --hyde --multi_query   # full pipeline (best config)
+venv/Scripts/python src/evaluate.py                        # baseline (no HyDE, no multi-query)
+```
+
 ---
 
 ## Background

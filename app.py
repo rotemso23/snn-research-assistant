@@ -38,14 +38,8 @@ with st.sidebar:
 @st.cache_resource
 def load_pipeline():
     """Warm up the embedding model and vectorstore once on app start."""
-    from src.retriever import _get_vectorstore, retrieve
-    vs = _get_vectorstore()
-    count = vs._collection.count()
-    # Test 1: raw similarity_search — no MMR, no Hebrew filter
-    raw_docs = vs.similarity_search("spiking neural network", k=5)
-    # Test 2: full retrieve() — MMR + Hebrew filter
-    filtered_docs = retrieve("spiking neural network", k=5)
-    return count, len(raw_docs), len(filtered_docs)
+    from src.retriever import _get_vectorstore
+    _get_vectorstore()
 
 
 # --- Main UI ---
@@ -59,12 +53,7 @@ if not os.getenv("ANTHROPIC_API_KEY"):
     )
     st.stop()
 
-chunk_count, raw_retrieved, filtered_retrieved = load_pipeline()
-
-with st.sidebar:
-    st.caption(f"DB: {chunk_count} chunks loaded")
-    st.caption(f"Raw search: {raw_retrieved}/5 chunks")
-    st.caption(f"After Hebrew filter: {filtered_retrieved}/5 chunks")
+load_pipeline()
 
 with st.form("question_form"):
     question = st.text_input(
