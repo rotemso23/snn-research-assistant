@@ -4,7 +4,8 @@ langchain-chroma==1.1.0
 langchain-huggingface==1.2.1
 langchain-anthropic==1.4.0
 langchain-text-splitters==1.1.1
-sentence-transformers
+sentence-transformers==5.4.0
+transformers==5.5.3
 chromadb==1.5.7
 anthropic
 streamlit
