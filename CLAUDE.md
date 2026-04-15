@@ -14,6 +14,7 @@ HuggingFace Spaces with a Streamlit UI.
 | Orchestration | LangChain |
 | Embeddings | `BAAI/bge-large-en-v1.5` (HuggingFace) |
 | Vector store | ChromaDB (`chroma_db/`) |
+| Query expansion | HyDE + Multi-Query (Claude API) |
 | Reranking | CrossEncoder `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | Generation | Claude API (`claude-sonnet-4-6`) |
 | UI | Streamlit (`app.py`) |
@@ -28,22 +29,26 @@ snn-research-assistant/
 ├── requirements-eval.txt   ← Evaluation-only dependencies (ragas, rouge-score, nltk)
 ├── src/
 │   ├── ingest.py           ← PDF loading, chunking, embedding, storing in Chroma
-│   ├── retriever.py        ← MMR retrieval + CrossEncoder reranking
+│   ├── retriever.py        ← Multi-Query + HyDE + MMR + CrossEncoder reranking
 │   ├── generator.py        ← Claude API call with context + citations
 │   ├── pipeline.py         ← ask(question: str) -> {"answer": str, "sources": list[str]}
-│   └── evaluate.py         ← RAGAS evaluation runner
+│   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query flags)
 ├── chroma_db/              ← Pre-built vector store (committed via git LFS)
-└── evaluation_results.json ← RAGAS results for 10 test questions
+├── evaluation_results_baseline_800.json  ← RAGAS results — baseline (800-char chunks)
+├── evaluation_results_1400.json          ← RAGAS results — 1400-char chunks
+├── evaluation_results_1400_hyde.json     ← RAGAS results — 1400 chunks + HyDE
+└── evaluation_results_1400_hyde_mq.json  ← RAGAS results — 1400 chunks + HyDE + Multi-Query (best)
 ```
 
 ## Pipeline configuration
 
 | Setting | Value |
 |---------|-------|
-| Chunk size | 800 |
+| Chunk size | 1400 |
 | Chunk overlap | 200 |
-| Retrieval | MMR, fetch_k=15 |
-| Reranking | CrossEncoder, top_k=7 |
+| Query expansion | HyDE + Multi-Query (2 variants, 3 queries total) |
+| Retrieval | MMR, fetch_k=20 per query |
+| Reranking | CrossEncoder, top_k=7 from merged pool |
 | Generation | max_tokens=1024, answers only from provided context |
 
 ## Running locally

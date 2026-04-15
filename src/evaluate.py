@@ -14,6 +14,7 @@ Usage:
     python src/evaluate.py
 """
 
+import argparse
 import json
 import os
 import sys
@@ -95,7 +96,7 @@ def compute_semantic_similarity(answers: list[str], ground_truths: list[str]) ->
     return similarities.tolist()
 
 
-def run_evaluation() -> dict:
+def run_evaluation(use_hyde: bool = False, multi_query: bool = False) -> dict:
     """Run RAGAS evaluation and return results."""
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -119,12 +120,12 @@ def run_evaluation() -> dict:
     ground_truths = []
     per_question = []
 
-    print("Generating answers for evaluation set...")
+    print(f"Generating answers for evaluation set (HyDE={'on' if use_hyde else 'off'}, multi_query={'on' if multi_query else 'off'})...")
     for item in EVAL_SET:
         question = item["question"]
         ground_truth = item["ground_truth"]
 
-        chunks = retrieve_and_rerank(question, fetch_k=20, top_k=7)
+        chunks = retrieve_and_rerank(question, fetch_k=20, top_k=7, use_hyde=use_hyde, multi_query=multi_query)
         result = generate(question, chunks)
         answer = result["answer"]
         contexts = [doc.page_content for doc in chunks]
@@ -171,9 +172,29 @@ def run_evaluation() -> dict:
 
 
 if __name__ == "__main__":
-    scores = run_evaluation()
+    parser = argparse.ArgumentParser(description="Evaluate the RAG pipeline with RAGAS")
+    parser.add_argument(
+        "--hyde",
+        action="store_true",
+        help="Use HyDE (Hypothetical Document Embeddings) during retrieval",
+    )
+    parser.add_argument(
+        "--multi_query",
+        action="store_true",
+        help="Generate query variants and merge retrieval candidates before reranking",
+    )
+    args = parser.parse_args()
 
-    output_path = "evaluation_results.json"
+    scores = run_evaluation(use_hyde=args.hyde, multi_query=args.multi_query)
+
+    if args.hyde and args.multi_query:
+        output_path = "evaluation_results_1400_hyde_mq.json"
+    elif args.hyde:
+        output_path = "evaluation_results_1400_hyde.json"
+    elif args.multi_query:
+        output_path = "evaluation_results_1400_mq.json"
+    else:
+        output_path = "evaluation_results_1400.json"
     with open(output_path, "w") as f:
         json.dump(scores, f, indent=2)
 

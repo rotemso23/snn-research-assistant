@@ -19,7 +19,7 @@ load_dotenv()
 
 CHROMA_DIR = "chroma_db"
 EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
-CHUNK_SIZE = 800
+CHUNK_SIZE = 1400
 CHUNK_OVERLAP = 200
 
 

@@ -4,5 +4,6 @@ CLAUDE_PRIVATE.md
 __pycache__/
 *.pyc
 *.pyo
+*.pickle
 .DS_Store
 venv/

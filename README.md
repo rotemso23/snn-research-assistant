@@ -25,20 +25,32 @@ User question
       │
       ▼
 ┌─────────────────────┐
-│  HuggingFace        │   BAAI/bge-large-en-v1.5
-│  Embeddings         │   (query embedding)
+│  Multi-Query        │   Claude generates 2 alternative phrasings
+│  (query expansion)  │   to widen the candidate pool
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
-│  ChromaDB           │   MMR retrieval
-│  Vector Store       │   fetch_k=15 candidates
+│  HyDE               │   Claude generates a hypothetical answer
+│  (query expansion)  │   per query to improve embedding alignment
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  HuggingFace        │   BAAI/bge-large-en-v1.5
+│  Embeddings         │   (hypothetical answer embeddings)
+└────────┬────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  ChromaDB           │   MMR retrieval × 3 queries
+│  Vector Store       │   fetch_k=20 per query, results merged
 └────────┬────────────┘
          │
          ▼
 ┌─────────────────────┐
 │  CrossEncoder       │   ms-marco-MiniLM-L-6-v2
-│  Reranker           │   top_k=7 chunks selected
+│  Reranker           │   top_k=7 chunks selected from merged pool
 └────────┬────────────┘
          │
          ▼
@@ -60,6 +72,8 @@ User question
 | Orchestration | LangChain | Industry-standard RAG framework |
 | Embeddings | `BAAI/bge-large-en-v1.5` (HuggingFace) | State-of-the-art retrieval embeddings |
 | Vector store | ChromaDB | Local, persistent, no external dependencies |
+| Query expansion | HyDE (Hypothetical Document Embeddings) | Bridges gap between question phrasing and document language |
+| Query expansion | Multi-Query retrieval | Generates alternative phrasings to widen candidate pool and fix hard retrieval misses |
 | Reranking | CrossEncoder (`ms-marco-MiniLM-L-6-v2`) | Precision boost over embedding similarity alone |
 | Retrieval strategy | MMR (Maximal Marginal Relevance) | Reduces redundant chunks in retrieved context |
 | Generation | Claude API (`claude-sonnet-4-6`) | Instruction-following, citation-grounded answers |
@@ -71,19 +85,21 @@ User question
 
 ## Evaluation (RAGAS)
 
-Evaluated on a manually curated set of 10 question/answer pairs drawn from the ingested papers:
+Evaluated on a manually curated set of 10 question/answer pairs drawn from the ingested papers.
+Four configurations compared — each adding one optimization on top of the previous:
 
-| Metric | Score | What it measures |
-|--------|-------|-----------------|
-| Faithfulness | **0.854** | Are claims in the answer grounded in retrieved context? |
-| Answer Relevancy | **0.677** | Does the answer address the question? |
-| Context Precision | **0.747** | Are retrieved chunks relevant to the question? |
-| Semantic Similarity | **0.824** | How close is the answer to the ground truth? |
-| Context Recall | 0.400 | Did retrieval cover all facts in the ground truth? |
+| Metric | Baseline (800) | 1400 chunks | + HyDE | + Multi-Query | What it measures |
+|--------|---------------|-------------|--------|---------------|-----------------|
+| Faithfulness | 0.854 | 0.931 | 0.915 | **0.928** | Are claims in the answer grounded in retrieved context? |
+| Answer Relevancy | 0.677 | 0.729 | 0.830 | **0.845** | Does the answer address the question? |
+| Context Precision | 0.747 | 0.647 | 0.731 | 0.652 | Are retrieved chunks relevant to the question? |
+| Semantic Similarity | 0.824 | 0.811 | 0.835 | **0.838** | How close is the answer to the ground truth? |
+| Context Recall | 0.400 | 0.450 | 0.500 | **0.650** | Did retrieval cover all facts in the ground truth? |
 
-> Context recall is lower because several ground-truth answers are broad thesis-level claims
-> that span more content than the top-7 retrieved chunks can cover — a known limitation of
-> fixed-k retrieval on long-form questions.
+**Optimizations applied:**
+- **Chunk size 800 → 1400 chars** — splits at paragraph boundaries instead of mid-sentence, improving chunk coherence and faithfulness
+- **HyDE (Hypothetical Document Embeddings)** — Claude generates a plausible answer before retrieval; its embedding aligns better with paper language than the raw question, improving recall and answer relevancy
+- **Multi-Query retrieval** — Claude generates 2 alternative phrasings of each question; candidates from all 3 queries are merged and reranked together, fixing hard retrieval misses where the original phrasing embeds far from the relevant chunks (context recall +15%)
 
 ---
 
@@ -96,12 +112,15 @@ snn-research-assistant/
 ├── requirements-eval.txt   ← Evaluation-only dependencies
 ├── src/
 │   ├── ingest.py           ← PDF loading, chunking, embedding, storing in Chroma
-│   ├── retriever.py        ← MMR retrieval + CrossEncoder reranking
+│   ├── retriever.py        ← Multi-Query + HyDE + MMR retrieval + CrossEncoder reranking
 │   ├── generator.py        ← Claude API call with retrieved context + citations
 │   ├── pipeline.py         ← ask(question) → {answer, sources}
-│   └── evaluate.py         ← RAGAS evaluation runner
+│   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query flags)
 ├── chroma_db/              ← Pre-built vector store (committed, ready to use)
-└── evaluation_results.json ← Full per-question RAGAS results
+├── evaluation_results_baseline_800.json  ← RAGAS results — baseline (800-char chunks)
+├── evaluation_results_1400.json          ← RAGAS results — 1400-char chunks
+├── evaluation_results_1400_hyde.json     ← RAGAS results — 1400 chunks + HyDE
+└── evaluation_results_1400_hyde_mq.json  ← RAGAS results — 1400 chunks + HyDE + Multi-Query (best)
 ```
 
 ---

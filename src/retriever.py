@@ -9,6 +9,7 @@ Two retrieval strategies are available:
 import os
 from pathlib import Path
 
+import anthropic
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -20,6 +21,7 @@ load_dotenv()
 CHROMA_DIR = "chroma_db"
 EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
 CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+HYDE_MODEL = "claude-sonnet-4-6"
 DEFAULT_K = 15
 
 _vectorstore: Chroma | None = None
@@ -61,17 +63,93 @@ def retrieve(query: str, k: int = DEFAULT_K) -> list[Document]:
     return retriever.invoke(query)
 
 
-def retrieve_and_rerank(query: str, fetch_k: int = 15, top_k: int = 5) -> list[Document]:
+def _generate_query_variants(question: str, n: int = 2) -> list[str]:
+    """Generate n alternative phrasings of the question for multi-query retrieval.
+
+    Different phrasings embed differently and surface different chunks, so the
+    merged candidate pool is much richer than any single query alone.
+    """
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=HYDE_MODEL,
+        max_tokens=150,
+        system=(
+            "You are a search query optimizer for academic paper retrieval. "
+            "Given a question, write alternative phrasings that use different vocabulary "
+            "and angle — the kind of language that would appear in a research paper or thesis. "
+            f"Output exactly {n} alternatives, one per line, no numbering or extra text."
+        ),
+        messages=[{"role": "user", "content": question}],
+    )
+    lines = [l.strip() for l in response.content[0].text.strip().split("\n") if l.strip()]
+    return lines[:n]
+
+
+def _generate_hypothetical_answer(question: str) -> str:
+    """Generate a plausible hypothetical answer to use as the retrieval query (HyDE).
+
+    The hypothetical answer embeds closer to real paper chunks than the bare
+    question does, because it uses the same dense, declarative language as the
+    source documents. The answer is never shown to the user — it is only used
+    to compute the search embedding.
+    """
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=HYDE_MODEL,
+        max_tokens=150,
+        system=(
+            "You are a research assistant specializing in spiking neural networks and "
+            "neuromorphic computing. Given a question, write a concise 2-3 sentence "
+            "answer as it might appear in a research paper — dense, technical, and "
+            "declarative. Output only the answer, nothing else."
+        ),
+        messages=[{"role": "user", "content": question}],
+    )
+    return response.content[0].text.strip()
+
+
+def retrieve_and_rerank(
+    query: str,
+    fetch_k: int = 15,
+    top_k: int = 5,
+    use_hyde: bool = False,
+    multi_query: bool = False,
+) -> list[Document]:
     """Retrieve fetch_k chunks with MMR, then rerank with CrossEncoder, return top_k.
 
     The CrossEncoder reads (query, chunk) pairs together for precise relevance
     scoring — more accurate than embedding cosine similarity alone.
+
+    Args:
+        query:        The user's original question.
+        fetch_k:      Number of candidates to fetch per query via MMR.
+        top_k:        Number of chunks to return after reranking.
+        use_hyde:     If True, generate a hypothetical answer and use its embedding
+                      for the MMR search instead of the raw question embedding.
+                      The CrossEncoder always uses the original query.
+        multi_query:  If True, generate 2 alternative phrasings and retrieve
+                      candidates for all 3 queries. The merged pool (deduplicated)
+                      is reranked together — widens coverage for hard retrieval cases.
     """
-    docs = retrieve(query, k=fetch_k)
+    if multi_query:
+        queries = [query] + _generate_query_variants(query, n=2)
+        seen: dict[str, Document] = {}
+        for q in queries:
+            retrieval_q = _generate_hypothetical_answer(q) if use_hyde else q
+            for doc in retrieve(retrieval_q, k=fetch_k):
+                key = doc.page_content[:200]
+                if key not in seen:
+                    seen[key] = doc
+        candidates = list(seen.values())
+    else:
+        retrieval_query = _generate_hypothetical_answer(query) if use_hyde else query
+        candidates = retrieve(retrieval_query, k=fetch_k)
+
     ce = _get_cross_encoder()
-    pairs = [[query, doc.page_content] for doc in docs]
+    # Always rerank against the original question, not the hypothetical.
+    pairs = [[query, doc.page_content] for doc in candidates]
     scores = ce.predict(pairs)
-    ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
+    ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
     return [doc for _, doc in ranked[:top_k]]
 
 
