@@ -8,3 +8,4 @@ __pycache__/
 !chroma_db/**/*.pickle
 .DS_Store
 venv/
+win_ca_bundle.pem
