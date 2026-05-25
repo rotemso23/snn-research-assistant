@@ -8,9 +8,9 @@ Graph topology:
     [retrieve_rerank]
       │
       ▼
-    [grade_documents] ──── some relevant ──────────────────────────────► [generate_answer]
+    [grade_documents] ──── all_filtered=False ───────────────────────► [generate_answer]
       │                                                                         │
-      └── none relevant + not yet rewritten → [rewrite_query]        route_after_generate
+      └── all_filtered=True + not rewritten → [rewrite_query]        route_after_generate
                                    │                                    ├── good → END
                                    ▼                                    └── "I don't know"
                             [retrieve_rerank]                                   ▼
@@ -54,6 +54,10 @@ class RAGState(TypedDict):
     fallback_attempted: bool
     # Circuit-breaker: prevents infinite rewrite loop (fires at most once)
     rewrite_attempted: bool
+    # Set by grade_documents: True when the grader rejected all chunks before
+    # the safety floor restored them. Used by route_after_grading to trigger
+    # rewrite_query even though state["chunks"] is never empty.
+    all_filtered: bool
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +96,7 @@ def grade_documents(state: RAGState) -> dict:
     original chunks are kept so the generator always has context to work with.
     """
     if not state["chunks"]:
-        return {"chunks": []}
+        return {"chunks": [], "all_filtered": False}
 
     client = anthropic.Anthropic()
     chunks_text = "\n\n".join(
@@ -125,11 +129,12 @@ def grade_documents(state: RAGState) -> dict:
         if grade == "yes"
     ]
     # Safety floor: never hand the generator zero chunks.
-    # If grading filtered everything (e.g. abstract question whose relevant
-    # chunks don't contain the exact topic keyword), keep the originals.
-    if not relevant:
+    # Record all_filtered=True *before* restoring originals so route_after_grading
+    # can still detect poor retrieval quality and trigger rewrite_query.
+    all_filtered = not relevant
+    if all_filtered:
         relevant = state["chunks"]
-    return {"chunks": relevant}
+    return {"chunks": relevant, "all_filtered": all_filtered}
 
 
 def rewrite_query(state: RAGState) -> dict:
@@ -179,14 +184,17 @@ def fallback_retrieve(state: RAGState) -> dict:
 # ---------------------------------------------------------------------------
 
 def route_after_grading(state: RAGState) -> str:
-    """After grade_documents: rewrite if no chunks remain and not yet tried; else generate.
+    """After grade_documents: rewrite if the grader rejected all chunks and not yet tried; else generate.
+
+    Reads all_filtered (set by grade_documents before the safety floor) rather than
+    checking state["chunks"], which is never empty after the safety floor runs.
 
     Returns:
-        "rewrite_query"   — chunks were all filtered out AND rewrite hasn't been tried yet
+        "rewrite_query"   — all_filtered is True AND rewrite hasn't been tried yet
         "generate_answer" — at least one chunk passed grading, OR rewrite already ran
                             (in which case generate_answer will return "I don't know")
     """
-    if not state["chunks"] and not state.get("rewrite_attempted", False):
+    if state.get("all_filtered", False) and not state.get("rewrite_attempted", False):
         return "rewrite_query"
     return "generate_answer"
 
