@@ -11,3 +11,4 @@ anthropic
 streamlit
 pypdf
 python-dotenv
+langgraph==1.1.6

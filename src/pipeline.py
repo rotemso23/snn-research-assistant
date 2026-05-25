@@ -1,10 +1,13 @@
 """
-pipeline.py — End-to-end RAG pipeline: retrieval + generation.
+pipeline.py — Public API for the SNN RAG pipeline.
+
+Delegates to the LangGraph StateGraph defined in src/graph.py.
+The ask() signature and return type are identical to the previous version —
+app.py, evaluate.py, and the HuggingFace deployment are untouched.
 """
 
 from dotenv import load_dotenv
-from src.retriever import retrieve, retrieve_and_rerank
-from src.generator import generate
+from src.graph import _graph
 
 load_dotenv()
 
@@ -25,19 +28,20 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
     Returns:
         {"answer": str, "sources": list[str]}
     """
-    chunks = retrieve_and_rerank(question, fetch_k=20, top_k=k, use_hyde=use_hyde, multi_query=multi_query)
-    result = generate(question, chunks)
-
-    # Fallback: HyDE + CrossEncoder misses structural chunks (ToC entries, section
-    # headers) because natural-language questions don't embed close to navigation
-    # content. Augmenting with domain terms ("spiking neural network thesis") shifts
-    # the embedding toward the thesis's own structural chunks.
-    if "does not contain enough information" in result["answer"]:
-        augmented = question + " spiking neural network thesis"
-        chunks = retrieve(augmented, k=15)
-        result = generate(question, chunks)
-
-    return result
+    initial_state = {
+        "question": question,
+        "k": k,
+        "use_hyde": use_hyde,
+        "multi_query": multi_query,
+        # Remaining fields are populated by graph nodes; initialised here
+        # because LangGraph TypedDict channels have no runtime defaults.
+        "chunks": [],
+        "answer": "",
+        "sources": [],
+        "fallback_attempted": False,
+    }
+    final_state = _graph.invoke(initial_state)
+    return {"answer": final_state["answer"], "sources": final_state["sources"]}
 
 
 if __name__ == "__main__":
