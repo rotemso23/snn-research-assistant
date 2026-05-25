@@ -33,12 +33,15 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
         "k": k,
         "use_hyde": use_hyde,
         "multi_query": multi_query,
+        # retrieval_query starts equal to question; rewrite_query may overwrite it
+        "retrieval_query": question,
         # Remaining fields are populated by graph nodes; initialised here
         # because LangGraph TypedDict channels have no runtime defaults.
         "chunks": [],
         "answer": "",
         "sources": [],
         "fallback_attempted": False,
+        "rewrite_attempted": False,
     }
     final_state = _graph.invoke(initial_state)
     return {"answer": final_state["answer"], "sources": final_state["sources"]}

@@ -37,6 +37,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_huggingface import HuggingFaceEmbeddings
 from src.retriever import retrieve_and_rerank
 from src.generator import generate
+from src.graph import _graph
 
 load_dotenv()
 
@@ -96,8 +97,16 @@ def compute_semantic_similarity(answers: list[str], ground_truths: list[str]) ->
     return similarities.tolist()
 
 
-def run_evaluation(use_hyde: bool = False, multi_query: bool = False) -> dict:
-    """Run RAGAS evaluation and return results."""
+def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: bool = False) -> dict:
+    """Run RAGAS evaluation and return results.
+
+    Args:
+        use_hyde:    Enable HyDE retrieval expansion.
+        multi_query: Enable multi-query retrieval expansion.
+        grading:     If True, run the full LangGraph pipeline so that
+                     grade_documents + rewrite_query are exercised.
+                     Saves to evaluation_results_grading.json.
+    """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise EnvironmentError("ANTHROPIC_API_KEY not set. Check your .env file.")
@@ -120,14 +129,31 @@ def run_evaluation(use_hyde: bool = False, multi_query: bool = False) -> dict:
     ground_truths = []
     per_question = []
 
-    print(f"Generating answers for evaluation set (HyDE={'on' if use_hyde else 'off'}, multi_query={'on' if multi_query else 'off'})...")
+    mode = f"HyDE={'on' if use_hyde else 'off'}, multi_query={'on' if multi_query else 'off'}" + (", grading=on" if grading else "")
+    print(f"Generating answers for evaluation set ({mode})...")
     for item in EVAL_SET:
         question = item["question"]
         ground_truth = item["ground_truth"]
 
-        chunks = retrieve_and_rerank(question, fetch_k=20, top_k=7, use_hyde=use_hyde, multi_query=multi_query)
-        result = generate(question, chunks)
-        answer = result["answer"]
+        if grading:
+            final_state = _graph.invoke({
+                "question":           question,
+                "k":                  7,
+                "use_hyde":           use_hyde,
+                "multi_query":        multi_query,
+                "retrieval_query":    question,
+                "chunks":             [],
+                "answer":             "",
+                "sources":            [],
+                "fallback_attempted": False,
+                "rewrite_attempted":  False,
+            })
+            chunks = final_state["chunks"]
+            answer = final_state["answer"]
+        else:
+            chunks = retrieve_and_rerank(question, fetch_k=20, top_k=7, use_hyde=use_hyde, multi_query=multi_query)
+            result = generate(question, chunks)
+            answer = result["answer"]
         contexts = [doc.page_content for doc in chunks]
 
         samples.append(
@@ -183,11 +209,26 @@ if __name__ == "__main__":
         action="store_true",
         help="Generate query variants and merge retrieval candidates before reranking",
     )
+    parser.add_argument(
+        "--grading",
+        action="store_true",
+        help="Run the full LangGraph pipeline (grade_documents + rewrite_query). Saves to evaluation_results_grading.json.",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Override the output filename (e.g. evaluation_results_grading_v3.json).",
+    )
     args = parser.parse_args()
 
-    scores = run_evaluation(use_hyde=args.hyde, multi_query=args.multi_query)
+    scores = run_evaluation(use_hyde=args.hyde, multi_query=args.multi_query, grading=args.grading)
 
-    if args.hyde and args.multi_query:
+    if args.output:
+        output_path = args.output
+    elif args.grading:
+        output_path = "evaluation_results_grading.json"
+    elif args.hyde and args.multi_query:
         output_path = "evaluation_results_1400_hyde_mq.json"
     elif args.hyde:
         output_path = "evaluation_results_1400_hyde.json"
