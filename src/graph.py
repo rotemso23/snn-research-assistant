@@ -32,6 +32,9 @@ from langgraph.graph import StateGraph, START, END
 from src.retriever import retrieve_and_rerank, retrieve
 from src.generator import generate
 
+# Single client instance reused across all node calls
+_client = anthropic.Anthropic()
+
 
 # ---------------------------------------------------------------------------
 # State
@@ -69,12 +72,15 @@ def retrieve_rerank(state: RAGState) -> dict:
 
     Uses retrieval_query (not question directly) so that rewrite_query can
     substitute a better search query without changing the original question.
+    HyDE is skipped on the second pass (after rewrite_query) — the rewritten
+    query is already a sharpened technical string; wrapping it in a hypothetical
+    answer adds noise rather than signal.
     """
     chunks = retrieve_and_rerank(
         state["retrieval_query"],
         fetch_k=20,
         top_k=state["k"],
-        use_hyde=state["use_hyde"],
+        use_hyde=state["use_hyde"] and not state.get("rewrite_attempted", False),
         multi_query=state["multi_query"],
     )
     return {"chunks": chunks}
@@ -98,12 +104,11 @@ def grade_documents(state: RAGState) -> dict:
     if not state["chunks"]:
         return {"chunks": [], "all_filtered": False}
 
-    client = anthropic.Anthropic()
     chunks_text = "\n\n".join(
         f"Chunk {i+1}:\n{doc.page_content[:400]}"
         for i, doc in enumerate(state["chunks"])
     )
-    response = client.messages.create(
+    response = _client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=50,
         system=(
@@ -124,10 +129,20 @@ def grade_documents(state: RAGState) -> dict:
         for line in response.content[0].text.strip().split("\n")
         if line.strip()
     ]
-    relevant = [
-        doc for doc, grade in zip(state["chunks"], grades)
-        if grade == "yes"
-    ]
+    if len(grades) != len(state["chunks"]):
+        # Haiku returned an unexpected number of grade lines — use whatever grades
+        # we got, and keep the remaining ungraded chunks (benefit of the doubt).
+        graded_relevant = [
+            doc for doc, grade in zip(state["chunks"], grades)
+            if grade == "yes"
+        ]
+        ungraded = state["chunks"][len(grades):]
+        relevant = graded_relevant + ungraded
+    else:
+        relevant = [
+            doc for doc, grade in zip(state["chunks"], grades)
+            if grade == "yes"
+        ]
     # Safety floor: never hand the generator zero chunks.
     # Record all_filtered=True *before* restoring originals so route_after_grading
     # can still detect poor retrieval quality and trigger rewrite_query.
@@ -142,10 +157,14 @@ def rewrite_query(state: RAGState) -> dict:
 
     Uses Claude Haiku to produce a query rich in technical vocabulary likely
     to appear in research papers on SNNs and neuromorphic computing.
+    Passes the failed chunks to the rewriter so it can steer away from topics
+    that were already retrieved and deemed irrelevant.
     Sets rewrite_attempted=True (circuit-breaker) so this node fires at most once.
     """
-    client = anthropic.Anthropic()
-    response = client.messages.create(
+    failed = "\n".join(
+        f"- {doc.page_content[:200]}" for doc in state["chunks"]
+    )
+    response = _client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=100,
         system=(
@@ -155,7 +174,15 @@ def rewrite_query(state: RAGState) -> dict:
             "technical vocabulary likely to appear in research papers. "
             "Output only the rewritten query, nothing else."
         ),
-        messages=[{"role": "user", "content": state["question"]}],
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Question: {state['question']}\n\n"
+                f"The following chunks were retrieved but were all irrelevant:\n{failed}\n\n"
+                "Rewrite the question into a more precise search query that retrieves "
+                "chunks more directly relevant to answering it than the ones above."
+            ),
+        }],
     )
     rewritten = response.content[0].text.strip()
     return {"retrieval_query": rewritten, "rewrite_attempted": True}
@@ -168,15 +195,41 @@ def generate_answer(state: RAGState) -> dict:
 
 
 def fallback_retrieve(state: RAGState) -> dict:
-    """Node 5: augmented plain-MMR retrieval for the fallback path.
+    """Node 5: plain-MMR retrieval for the fallback path.
 
-    Appends domain terms to the query so the embedding shifts toward structural
-    thesis chunks that HyDE + CrossEncoder may have missed.
+    Skips HyDE, multi-query, and CrossEncoder — tries a genuinely different
+    retrieval strategy in case those steps biased or narrowed the candidate pool.
+    Fetches a wider k=15 to cast a broader net.
     Sets fallback_attempted=True so route_after_generate terminates on the next pass.
     """
-    augmented = state["question"] + " spiking neural network thesis"
-    chunks = retrieve(augmented, k=15)
+    chunks = retrieve(state["question"], k=15)
     return {"chunks": chunks, "fallback_attempted": True}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _answer_is_insufficient(answer: str) -> bool:
+    """Use Haiku to detect whether the answer signals insufficient context.
+
+    More robust than string matching — catches any phrasing the model uses
+    to express that it could not answer from the provided context.
+    """
+    response = _client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=5,
+        system="Reply with only 'yes' or 'no'. No other text.",
+        messages=[{
+            "role": "user",
+            "content": (
+                "Does this answer indicate that the question could not be answered "
+                "due to insufficient context or missing information?\n\n"
+                f"Answer: {answer}"
+            ),
+        }],
+    )
+    return response.content[0].text.strip().lower() == "yes"
 
 
 # ---------------------------------------------------------------------------
@@ -208,9 +261,8 @@ def route_after_generate(state: RAGState) -> str:
         END otherwise — including when the fallback already ran, so the
         graph terminates even if the fallback answer is also "I don't know".
     """
-    insufficient = "does not contain enough information" in state["answer"]
     already_tried = state.get("fallback_attempted", False)
-    if insufficient and not already_tried:
+    if not already_tried and _answer_is_insufficient(state["answer"]):
         return "fallback_retrieve"
     return END
 

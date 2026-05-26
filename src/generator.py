@@ -3,11 +3,14 @@ generator.py — Send retrieved context to Claude and return an answer with cita
 """
 
 import os
+import re
 from dotenv import load_dotenv
 import anthropic
 from langchain_core.documents import Document
 
 load_dotenv()
+
+_client = anthropic.Anthropic()
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
@@ -31,16 +34,27 @@ def _build_context_block(chunks: list[Document]) -> str:
     return "\n\n".join(parts)
 
 
-def _extract_sources(chunks: list[Document]) -> list[str]:
-    """Return deduplicated list of source filenames."""
-    seen = set()
-    sources = []
-    for doc in chunks:
-        source = os.path.basename(doc.metadata.get("source", "unknown"))
-        if source not in seen:
-            seen.add(source)
-            sources.append(source)
-    return sources
+def _extract_cited_sources(answer: str, chunks: list[Document]) -> list[str]:
+    """Return sources the model actually cited in its answer, in order of appearance.
+
+    Parses (filename.pdf) patterns from the answer text and cross-references
+    against the chunk sources to guard against hallucinated filenames.
+    Falls back to all chunk sources if the model cited nothing (e.g. ignored
+    the citation instruction).
+    """
+    valid_sources = {
+        os.path.basename(doc.metadata.get("source", "unknown"))
+        for doc in chunks
+    }
+    cited = re.findall(r'\(([^)]+\.pdf)\)', answer)
+    seen: set[str] = set()
+    sources: list[str] = []
+    for s in cited:
+        if s in valid_sources and s not in seen:
+            seen.add(s)
+            sources.append(s)
+    # Fallback: model answered without citing — return all chunk sources
+    return sources if sources else list(valid_sources)
 
 
 def generate(question: str, chunks: list[Document]) -> dict:
@@ -56,24 +70,24 @@ def generate(question: str, chunks: list[Document]) -> dict:
             "sources": [],
         }
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise EnvironmentError("ANTHROPIC_API_KEY not set. Check your .env file.")
-
-    client = anthropic.Anthropic(api_key=api_key)
-
     context_block = _build_context_block(chunks)
     user_message = f"Context:\n{context_block}\n\nQuestion: {question}"
 
-    message = client.messages.create(
+    message = _client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
+        system=[
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         messages=[{"role": "user", "content": user_message}],
     )
 
     answer = message.content[0].text
-    sources = _extract_sources(chunks)
+    sources = _extract_cited_sources(answer, chunks)
 
     return {"answer": answer, "sources": sources}
 

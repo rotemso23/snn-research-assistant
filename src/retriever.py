@@ -22,10 +22,12 @@ CHROMA_DIR = "chroma_db"
 EMBEDDING_MODEL = "BAAI/bge-large-en-v1.5"
 CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 HYDE_MODEL = "claude-sonnet-4-6"
+MULTI_QUERY_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_K = 15
 
 _vectorstore: Chroma | None = None
 _cross_encoder: CrossEncoder | None = None
+_client = anthropic.Anthropic()
 
 
 def _get_vectorstore() -> Chroma:
@@ -108,9 +110,8 @@ def _generate_query_variants(question: str, n: int = 2) -> list[str]:
     Different phrasings embed differently and surface different chunks, so the
     merged candidate pool is much richer than any single query alone.
     """
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model=HYDE_MODEL,
+    response = _client.messages.create(
+        model=MULTI_QUERY_MODEL,
         max_tokens=150,
         system=(
             "You are a search query optimizer for academic paper retrieval. "
@@ -132,8 +133,7 @@ def _generate_hypothetical_answer(question: str) -> str:
     source documents. The answer is never shown to the user — it is only used
     to compute the search embedding.
     """
-    client = anthropic.Anthropic()
-    response = client.messages.create(
+    response = _client.messages.create(
         model=HYDE_MODEL,
         max_tokens=150,
         system=(
