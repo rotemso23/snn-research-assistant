@@ -50,19 +50,22 @@ The pipeline is orchestrated as a **LangGraph StateGraph** — a directed graph 
   └───────────┬───────────┘  │                         │
               │           good answer             "I don't know"
               │              │                    (+ fallback not tried)
-              └──► retrieve_rerank                      │
-                  (loop back, HyDE                      ▼
-                   skipped on rewrite)    ┌─────────────────────────┐
-                                          │    fallback_retrieve    │  Plain MMR, k=15
-                                          │                         │  no HyDE, no CrossEncoder
-                                          └────────────┬────────────┘
-                                                       │
-                                                       ▼
-                                          ┌─────────────────────────┐
-                                          │     generate_answer     │
-                                          └────────────┬────────────┘
-                                                       │
-                                                      END
+              ▼              └──────────────────────────┼──► END
+  ┌───────────────────────┐                             │
+  │    retrieve_rerank    │  (HyDE skipped on rewrite)  ▼
+  └───────────┬───────────┘            ┌─────────────────────────┐
+              │                        │    fallback_retrieve    │  Plain MMR, k=15
+              ▼                        │                         │  no HyDE, no CrossEncoder
+  ┌───────────────────────┐            └────────────┬────────────┘
+  │    grade_documents    │                         │
+  └───────────┬───────────┘                         ▼
+              │                        ┌─────────────────────────┐
+              ▼  (rewrite_attempted    │     generate_answer     │
+  ┌───────────────────────┐  =True →   └────────────┬────────────┘
+  │    generate_answer    │  always                  │
+  └───────────┬───────────┘  generate)              END
+              │
+             END
 ```
 
 **Inside `retrieve_rerank`:**
