@@ -108,13 +108,13 @@ Multi-Query expansion  →  HyDE expansion  →  MMR retrieval (fetch_k=20 × 3 
 Evaluated on a manually curated set of 10 question/answer pairs drawn from the ingested papers.
 Four configurations compared — each adding one optimization on top of the previous:
 
-| Metric | Baseline (800) | 1400 chunks | + HyDE | + Multi-Query | What it measures |
-|--------|---------------|-------------|--------|---------------|-----------------|
-| Faithfulness | 0.854 | 0.931 | 0.915 | **0.928** | Are claims in the answer grounded in retrieved context? |
-| Answer Relevancy | 0.677 | 0.729 | 0.830 | **0.845** | Does the answer address the question? |
-| Context Precision | 0.747 | 0.647 | 0.731 | 0.652 | Are retrieved chunks relevant to the question? |
-| Semantic Similarity | 0.824 | 0.811 | 0.835 | **0.838** | How close is the answer to the ground truth? |
-| Context Recall | 0.400 | 0.450 | 0.500 | **0.650** | Did retrieval cover all facts in the ground truth? |
+| Metric | Baseline (800) | 1400 chunks | + HyDE | + Multi-Query | + Grading (best) | What it measures |
+|--------|---------------|-------------|--------|---------------|------------------|-----------------|
+| Faithfulness | 0.854 | 0.931 | 0.915 | 0.928 | **0.909** | Are claims in the answer grounded in retrieved context? |
+| Answer Relevancy | 0.677 | 0.729 | 0.830 | 0.845 | **0.946** | Does the answer address the question? |
+| Context Precision | 0.747 | 0.647 | 0.731 | 0.652 | **0.780** | Are retrieved chunks relevant to the question? |
+| Semantic Similarity | 0.824 | 0.811 | 0.835 | 0.838 | **0.859** | How close is the answer to the ground truth? |
+| Context Recall | 0.400 | 0.450 | 0.500 | **0.650** | **0.650** | Did retrieval cover all facts in the ground truth? |
 
 **Optimizations applied:**
 - **Chunk size 800 → 1400 chars** — splits at paragraph boundaries instead of mid-sentence, improving chunk coherence and faithfulness
@@ -123,6 +123,7 @@ Four configurations compared — each adding one optimization on top of the prev
 - **Hebrew chunk filtering** — the thesis includes a Hebrew abstract; the English-only embedding model (`bge-large-en-v1.5`) embeds Hebrew text poorly, causing it to surface irrelevantly. Chunks where >20% of letters are Hebrew are dropped post-retrieval, removing noise without affecting English content
 - **Thesis-targeted retrieval boost** — for queries about "the thesis"/"this work"/etc., generic MMR is dominated by other papers in the corpus. A source-filtered similarity search retrieves the most relevant thesis chunks directly, and the top-3 are pinned into the final result so the CrossEncoder cannot displace them entirely
 - **Domain-augmented fallback** — when HyDE + CrossEncoder returns "I don't know", the pipeline appends domain terms ("spiking neural network thesis") to the question and retries with plain MMR; this shifts the embedding toward the thesis's own structural chunks (ToC, section headers) which contain those terms, fixing structural questions like "what models were developed?"
+- **LangGraph grading (document relevance filter)** — Claude Haiku grades each retrieved chunk against the question before generation; irrelevant chunks are discarded and the query is rewritten if all chunks fail. Removing noise from the context significantly boosts answer relevancy (+10%) and context precision (+13%)
 
 ---
 
@@ -144,7 +145,8 @@ snn-research-assistant/
 ├── evaluation_results_baseline_800.json  ← RAGAS results — baseline (800-char chunks)
 ├── evaluation_results_1400.json          ← RAGAS results — 1400-char chunks
 ├── evaluation_results_1400_hyde.json     ← RAGAS results — 1400 chunks + HyDE
-└── evaluation_results_1400_hyde_mq.json  ← RAGAS results — 1400 chunks + HyDE + Multi-Query (best)
+├── evaluation_results_1400_hyde_mq.json  ← RAGAS results — 1400 chunks + HyDE + Multi-Query
+└── evaluation_results_grading.json       ← RAGAS results — full pipeline + LangGraph grading (best)
 ```
 
 ---
