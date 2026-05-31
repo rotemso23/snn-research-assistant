@@ -20,64 +20,62 @@ Ask natural-language questions, get answers grounded in the papers with source c
 
 ## Architecture
 
+The pipeline is orchestrated as a **LangGraph StateGraph** — a directed graph with conditional edges that handles retrieval quality, query rewriting, and fallback logic automatically.
+
 ```
-User question
-      │
-      ▼
-┌─────────────────────┐
-│  Multi-Query        │   Claude generates 2 alternative phrasings
-│  (query expansion)  │   to widen the candidate pool
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  HyDE               │   Claude generates a hypothetical answer
-│  (query expansion)  │   per query to improve embedding alignment
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  HuggingFace        │   BAAI/bge-large-en-v1.5
-│  Embeddings         │   (hypothetical answer embeddings)
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  ChromaDB           │   MMR retrieval × 3 queries
-│  Vector Store       │   fetch_k=20 per query, results merged
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  Hebrew filter      │   Drops chunks where >20% of letters are
-│                     │   Hebrew (thesis has a Hebrew abstract)
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  Thesis boost       │   If query mentions "thesis"/"this work"/etc.,
-│                     │   source-filtered retrieval pins top-3 thesis
-│                     │   chunks into the result set
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  CrossEncoder       │   ms-marco-MiniLM-L-6-v2
-│  Reranker           │   top_k=7 chunks selected from merged pool
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────┐
-│  Claude API         │   claude-sonnet-4-6
-│  Generation         │   answers from context only
-└────────┬────────────┘
-         │
-         ▼
-  "I don't know"? ──► Fallback: augment query with domain terms,
-         │                       retry with plain MMR (no HyDE, no CrossEncoder)
-         │                       surfaces ToC/structural chunks reliably
-         ▼
-  Answer + Sources
+                          START
+                            │
+                            ▼
+              ┌─────────────────────────┐
+              │     retrieve_rerank     │  Multi-Query + HyDE + MMR + CrossEncoder
+              └────────────┬────────────┘
+                           │
+                           ▼
+              ┌─────────────────────────┐
+              │     grade_documents     │  Claude Haiku grades each chunk
+              │                         │  (relevant / not relevant to question)
+              └────────────┬────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+      all chunks filtered?         at least one chunk passed
+      (+ not yet rewritten)              │
+              │                          ▼
+              ▼              ┌─────────────────────────┐
+  ┌───────────────────────┐  │     generate_answer     │  Claude Sonnet — answers
+  │     rewrite_query     │  │                         │  from context only
+  │  Claude Haiku rewrites│  └────────────┬────────────┘
+  │  query using technical│               │
+  │  SNN vocabulary       │  ┌────────────┴────────────┐
+  └───────────┬───────────┘  │                         │
+              │           good answer             "I don't know"
+              │              │                    (+ fallback not tried)
+              └──► retrieve_rerank                      │
+                  (loop back, HyDE                      ▼
+                   skipped on rewrite)    ┌─────────────────────────┐
+                                          │    fallback_retrieve    │  Plain MMR, k=15
+                                          │                         │  no HyDE, no CrossEncoder
+                                          └────────────┬────────────┘
+                                                       │
+                                                       ▼
+                                          ┌─────────────────────────┐
+                                          │     generate_answer     │
+                                          └────────────┬────────────┘
+                                                       │
+                                                      END
+```
+
+**Inside `retrieve_rerank`:**
+```
+Multi-Query expansion  →  HyDE expansion  →  MMR retrieval (fetch_k=20 × 3 queries)
+      │                                              │
+      └──────────────── merge candidates ───────────┘
+                                │
+                        Hebrew chunk filter   (drops chunks where >20% of letters are Hebrew)
+                                │
+                        Thesis boost          (pins top-3 thesis chunks for "thesis"/"this work" queries)
+                                │
+                        CrossEncoder rerank   (ms-marco-MiniLM-L-6-v2, top_k=7)
 ```
 
 ---
@@ -86,11 +84,13 @@ User question
 
 | Layer | Tool | Why |
 |-------|------|-----|
-| Orchestration | LangChain | Industry-standard RAG framework |
+| Orchestration | LangGraph `StateGraph` | Stateful graph with conditional edges — enables grading, rewriting, and fallback as first-class nodes |
 | Embeddings | `BAAI/bge-large-en-v1.5` (HuggingFace) | State-of-the-art retrieval embeddings |
 | Vector store | ChromaDB | Local, persistent, no external dependencies |
 | Query expansion | HyDE (Hypothetical Document Embeddings) | Bridges gap between question phrasing and document language |
 | Query expansion | Multi-Query retrieval | Generates alternative phrasings to widen candidate pool and fix hard retrieval misses |
+| Document grading | Claude Haiku (`claude-haiku-4-5`) | Fast, cheap relevance classification — filters irrelevant chunks before generation |
+| Query rewriting | Claude Haiku (`claude-haiku-4-5`) | Rewrites failed queries into technical SNN vocabulary when all chunks are graded irrelevant |
 | Reranking | CrossEncoder (`ms-marco-MiniLM-L-6-v2`) | Precision boost over embedding similarity alone |
 | Retrieval strategy | MMR (Maximal Marginal Relevance) | Reduces redundant chunks in retrieved context |
 | Generation | Claude API (`claude-sonnet-4-6`) | Instruction-following, citation-grounded answers |
@@ -134,7 +134,8 @@ snn-research-assistant/
 │   ├── ingest.py           ← PDF loading, chunking, embedding, storing in Chroma
 │   ├── retriever.py        ← Multi-Query + HyDE + MMR retrieval + Hebrew filter + thesis boost + CrossEncoder reranking
 │   ├── generator.py        ← Claude API call with retrieved context + citations
-│   ├── pipeline.py         ← ask(question) → {answer, sources}
+│   ├── graph.py            ← LangGraph StateGraph (nodes: retrieve_rerank, grade_documents, rewrite_query, generate_answer, fallback_retrieve)
+│   ├── pipeline.py         ← ask(question) → {answer, sources}  (thin wrapper over graph.py)
 │   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query flags)
 ├── chroma_db/              ← Pre-built vector store (committed, ready to use)
 ├── evaluation_results_baseline_800.json  ← RAGAS results — baseline (800-char chunks)

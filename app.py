@@ -25,7 +25,7 @@ with st.sidebar:
         built over academic papers on Spiking Neural Networks and neuromorphic computing.
 
         **Stack:**
-        - LangChain + ChromaDB
+        - LangGraph + LangChain + ChromaDB
         - HuggingFace sentence-transformers
         - Claude API (Anthropic)
         - Streamlit

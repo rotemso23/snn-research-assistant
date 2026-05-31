@@ -3,18 +3,20 @@
 ## What this project is
 
 A RAG pipeline that lets users ask questions over a collection of academic papers on
-Spiking Neural Networks (SNNs) and neuromorphic computing. Built with LangChain,
-ChromaDB, HuggingFace sentence-transformers, and the Claude API. Deployed on
+Spiking Neural Networks (SNNs) and neuromorphic computing. Built with LangGraph,
+LangChain, ChromaDB, HuggingFace sentence-transformers, and the Claude API. Deployed on
 HuggingFace Spaces with a Streamlit UI.
 
 ## Tech stack
 
 | Layer | Tool |
 |-------|------|
-| Orchestration | LangChain |
+| Orchestration | LangGraph `StateGraph` (`src/graph.py`) |
 | Embeddings | `BAAI/bge-large-en-v1.5` (HuggingFace) |
 | Vector store | ChromaDB (`chroma_db/`) |
 | Query expansion | HyDE + Multi-Query (Claude API) |
+| Document grading | Claude Haiku (`claude-haiku-4-5`) |
+| Query rewriting | Claude Haiku (`claude-haiku-4-5`) |
 | Reranking | CrossEncoder `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | Generation | Claude API (`claude-sonnet-4-6`) |
 | UI | Streamlit (`app.py`) |
@@ -31,6 +33,7 @@ snn-research-assistant/
 │   ├── ingest.py           ← PDF loading, chunking, embedding, storing in Chroma
 │   ├── retriever.py        ← Multi-Query + HyDE + MMR + CrossEncoder reranking
 │   ├── generator.py        ← Claude API call with context + citations
+│   ├── graph.py            ← LangGraph StateGraph (retrieve_rerank, grade_documents, rewrite_query, generate_answer, fallback_retrieve)
 │   ├── pipeline.py         ← ask(question: str) -> {"answer": str, "sources": list[str]}
 │   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query flags)
 ├── chroma_db/              ← Pre-built vector store (committed via git LFS)
@@ -52,7 +55,9 @@ snn-research-assistant/
 | Thesis boost | Queries containing "thesis"/"this work"/etc. trigger a source-filtered retrieval; top-3 thesis chunks are pinned into the final result |
 | Reranking | CrossEncoder, top_k=7 from merged pool |
 | Generation | max_tokens=1024, answers only from provided context |
-| Fallback | If generation returns "I don't know", retries with domain-augmented query + plain MMR (no HyDE, no CrossEncoder) |
+| Document grading | Claude Haiku classifies each chunk as relevant/irrelevant; if all filtered, triggers query rewrite |
+| Query rewriting | Claude Haiku rewrites the query using technical SNN vocabulary when grading rejects all chunks |
+| Fallback | If generation returns "I don't know" (detected by Haiku), retries with plain MMR k=15 (no HyDE, no CrossEncoder) |
 
 ## Running locally
 
