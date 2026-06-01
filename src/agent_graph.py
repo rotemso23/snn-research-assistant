@@ -48,7 +48,7 @@ from langchain_core.documents import Document
 from langgraph.graph import StateGraph, START, END
 import anthropic
 
-from src.retriever import retrieve_and_rerank, _get_cross_encoder  # _get_cross_encoder used in sub-query merge
+from src.retriever import retrieve_and_rerank, retrieve_fanout
 from src.generator import (
     _build_context_block,
     SYSTEM_PROMPT,
@@ -340,36 +340,22 @@ def retrieve_rerank_node(state: AgentState) -> dict:
     force_boost  = state.get("query_type") == "thesis_specific"
 
     if sub_queries and retry_count == 0:
-        # Fan-out: retrieve per sub-query, merge, re-rank merged pool
-        seen: dict[str, Document] = {}
-        for sq in sub_queries:
-            for doc in retrieve_and_rerank(
-                sq,
-                fetch_k=35,
-                top_k=state["k"],
-                use_hyde=use_hyde_now,
-                multi_query=False,  # already decomposed — no further expansion
-                force_thesis_boost=force_boost,
-            ):
-                key = doc.page_content[:200]
-                if key not in seen:
-                    seen[key] = doc
-
-        merged = list(seen.values())
-        if not merged:
+        chunks = retrieve_fanout(
+            state["question"],
+            sub_queries,
+            fetch_k=35,
+            top_k=state["k"],
+            use_hyde=use_hyde_now,
+            force_thesis_boost=force_boost,
+        )
+        if not chunks:
             # Fallback: nothing retrieved — try original question via standard path
-            return {"chunks": retrieve_and_rerank(
+            chunks = retrieve_and_rerank(
                 state["retrieval_query"], fetch_k=35, top_k=state["k"],
                 use_hyde=use_hyde_now, multi_query=state["multi_query"],
                 force_thesis_boost=force_boost,
-            )}
-
-        # Re-rank merged pool against the ORIGINAL question (not sub-queries)
-        ce = _get_cross_encoder()  # noqa: private import — documented dependency
-        pairs  = [[state["question"], doc.page_content] for doc in merged]
-        scores = ce.predict(pairs)
-        ranked = sorted(zip(scores, merged), key=lambda x: x[0], reverse=True)
-        return {"chunks": [doc for _, doc in ranked[:state["k"]]]}
+            )
+        return {"chunks": chunks}
 
     # Standard path (v5 behaviour)
     chunks = retrieve_and_rerank(

@@ -226,6 +226,48 @@ def retrieve_and_rerank(
     return [doc for _, doc in ranked[:top_k]]
 
 
+def retrieve_fanout(
+    original_question: str,
+    sub_queries: list[str],
+    fetch_k: int = 35,
+    top_k: int = 10,
+    use_hyde: bool = False,
+    force_thesis_boost: bool = False,
+) -> list[Document]:
+    """Fan-out retrieval for decomposed multi-part questions.
+
+    Calls retrieve_and_rerank once per sub-query (multi_query=False — already
+    decomposed), deduplicates the merged pool, then re-ranks everything against
+    the ORIGINAL question with CrossEncoder. Returns top_k chunks.
+
+    Returns an empty list if all sub-queries return nothing (caller handles
+    fallback).
+    """
+    seen: dict[str, Document] = {}
+    for sq in sub_queries:
+        for doc in retrieve_and_rerank(
+            sq,
+            fetch_k=fetch_k,
+            top_k=top_k,
+            use_hyde=use_hyde,
+            multi_query=False,  # already decomposed — no further expansion
+            force_thesis_boost=force_thesis_boost,
+        ):
+            key = doc.page_content[:200]
+            if key not in seen:
+                seen[key] = doc
+
+    merged = list(seen.values())
+    if not merged:
+        return []
+
+    ce = _get_cross_encoder()
+    pairs = [[original_question, doc.page_content] for doc in merged]
+    scores = ce.predict(pairs)
+    ranked = sorted(zip(scores, merged), key=lambda x: x[0], reverse=True)
+    return [doc for _, doc in ranked[:top_k]]
+
+
 if __name__ == "__main__":
     test_query = "What is the main contribution of this thesis?"
     print(f"Query: {test_query}\n")
