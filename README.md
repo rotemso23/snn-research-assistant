@@ -37,35 +37,39 @@ The pipeline is orchestrated as a **LangGraph StateGraph** with LLM-driven nodes
          multi_part               all other types
               │                         │
               ▼                         │
-  ┌───────────────────────┐             │
-  │     decompose_node    │  Haiku splits into 2–3 independent sub-queries
-  └───────────┬───────────┘             │
-              │                         │
-              └────────────┬────────────┘
-                           │
-                           ▼
-              ┌─────────────────────────┐
-              │     retrieve_rerank     │  HyDE + Multi-Query + MMR + CrossEncoder
-              └────────────┬────────────┘  (fan-out per sub-query if decomposed)
-                           │
-                           ▼
-              ┌─────────────────────────┐
-              │       grade_node        │  Claude Haiku selects relevant chunks
-              │                         │  and decides: needs_more_context? (bool)
-              │                         │  If yes → produces missing_aspects query
-              └────────────┬────────────┘
-                           │
-              ┌────────────┴────────────┐
-              │                         │
-      needs_more=True             needs_more=False
-      retry_count < 2             (or budget exhausted)
-              │                         │
-              ▼                         ▼
-     [retrieve_rerank]          ┌─────────────────────────┐
-     (missing_aspects used as   │      answer_node        │  Claude Sonnet — answers
-      next retrieval query)     │                         │  from context only
-              │                 └────────────┬────────────┘
-              └──► [grade_node]             END
+  ┌─────────────────────────┐           │
+  │      decompose_node     │           │
+  │  Haiku splits into      │           │
+  │  2–3 sub-queries        │           │
+  └────────────┬────────────┘           │
+               │                        │
+               └────────────┬───────────┘
+                            │
+                            ▼
+              ┌─────────────────────────┐◄─────────────────────────────┐
+              │     retrieve_rerank     │  HyDE + Multi-Query + MMR    │
+              └────────────┬────────────┘  + CrossEncoder               │
+                           │               (fan-out if decomposed)      │
+                           ▼                                            │
+              ┌─────────────────────────┐                              │ needs_more=True
+              │       grade_node        │  Haiku selects relevant       │ (missing_aspects
+              │                         │  chunks; decides              │  as new query)
+              │                         │  needs_more_context (bool)    │
+              └────────────┬────────────┘  if yes → missing_aspects    │
+                           │                                            │
+              ┌────────────┴────────────┐                              │
+              │                         │                               │
+      needs_more=True          needs_more=False                        │
+      retry_count < 2          (or budget exhausted)                   │
+              │                         │                               │
+              └─────────────────────────┼───────────────────────────────┘
+                                        │
+                                        ▼
+                          ┌─────────────────────────┐
+                          │      answer_node        │  Claude Sonnet — answers
+                          │                         │  from context only
+                          └────────────┬────────────┘
+                                      END
 ```
 
 **Inside `retrieve_rerank` (standard path):**
