@@ -11,12 +11,13 @@ HuggingFace Spaces with a Streamlit UI.
 
 | Layer | Tool |
 |-------|------|
-| Orchestration | LangGraph `StateGraph` (`src/graph.py`) |
+| Graph | LangGraph `StateGraph` (`src/agent_graph.py`) |
 | Embeddings | `BAAI/bge-large-en-v1.5` (HuggingFace) |
 | Vector store | ChromaDB (`chroma_db/`) |
+| Query routing | Claude Haiku (`claude-haiku-4-5`) |
+| Query decomposition | Claude Haiku (`claude-haiku-4-5`) |
 | Query expansion | HyDE + Multi-Query (Claude API) |
 | Document grading | Claude Haiku (`claude-haiku-4-5`) |
-| Query rewriting | Claude Haiku (`claude-haiku-4-5`) |
 | Reranking | CrossEncoder `cross-encoder/ms-marco-MiniLM-L-6-v2` |
 | Generation | Claude API (`claude-sonnet-4-6`) |
 | UI | Streamlit (`app.py`) |
@@ -31,16 +32,19 @@ snn-research-assistant/
 ├── requirements-eval.txt   ← Evaluation-only dependencies (ragas, rouge-score, nltk)
 ├── src/
 │   ├── ingest.py           ← PDF loading, chunking, embedding, storing in Chroma
-│   ├── retriever.py        ← Multi-Query + HyDE + MMR + CrossEncoder reranking
+│   ├── retriever.py        ← Multi-Query + HyDE + MMR + CrossEncoder + fan-out retrieval
 │   ├── generator.py        ← Claude API call with context + citations
-│   ├── graph.py            ← LangGraph StateGraph (retrieve_rerank, grade_documents, rewrite_query, generate_answer, fallback_retrieve)
+│   ├── agent_graph.py      ← Agentic LangGraph StateGraph (router, decompose, retrieve_rerank, grade, answer)
+│   ├── graph.py            ← Original CRAG pipeline (kept for reference and --grading eval)
 │   ├── pipeline.py         ← ask(question: str) -> {"answer": str, "sources": list[str]}
-│   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query flags)
+│   └── evaluate.py         ← RAGAS evaluation runner (--hyde, --multi_query, --agentic flags)
 ├── chroma_db/              ← Pre-built vector store (committed via git LFS)
-├── evaluation_results_baseline_800.json  ← RAGAS results — baseline (800-char chunks)
-├── evaluation_results_1400.json          ← RAGAS results — 1400-char chunks
-├── evaluation_results_1400_hyde.json     ← RAGAS results — 1400 chunks + HyDE
-└── evaluation_results_1400_hyde_mq.json  ← RAGAS results — 1400 chunks + HyDE + Multi-Query (best)
+├── evaluation_results_baseline_800.json    ← RAGAS results — baseline (800-char chunks)
+├── evaluation_results_1400.json            ← RAGAS results — 1400-char chunks
+├── evaluation_results_1400_hyde.json       ← RAGAS results — 1400 chunks + HyDE
+├── evaluation_results_1400_hyde_mq.json    ← RAGAS results — 1400 chunks + HyDE + Multi-Query
+├── evaluation_results_grading.json         ← RAGAS results — original CRAG pipeline + grading
+└── evaluation_results_agentic.json         ← RAGAS results — agentic RAG (best)
 ```
 
 ## Pipeline configuration
@@ -49,15 +53,16 @@ snn-research-assistant/
 |---------|-------|
 | Chunk size | 1400 |
 | Chunk overlap | 200 |
-| Query expansion | HyDE + Multi-Query (2 variants, 3 queries total) |
-| Retrieval | MMR, fetch_k=20 per query |
+| Query routing | Haiku classifies into simple_factual / thesis_specific / conceptual_snn / multi_part |
+| Query decomposition | multi_part queries split into 2–3 sub-queries (fan-out retrieval) |
+| Query expansion | HyDE + Multi-Query (2 variants, 3 queries total); skipped for simple_factual |
+| Retrieval | MMR, fetch_k=35 per query |
 | Hebrew filter | Chunks where >20% of letters are Hebrew are dropped post-retrieval (thesis has a Hebrew abstract) |
-| Thesis boost | Queries containing "thesis"/"this work"/etc. trigger a source-filtered retrieval; top-3 thesis chunks are pinned into the final result |
-| Reranking | CrossEncoder, top_k=7 from merged pool |
+| Thesis boost | thesis_specific classification triggers source-filtered retrieval; CrossEncoder ranks all candidates fairly (no pinning) |
+| Reranking | CrossEncoder, top_k=10 from merged pool |
 | Generation | max_tokens=1024, answers only from provided context |
-| Document grading | Claude Haiku classifies each chunk as relevant/irrelevant; if all filtered, triggers query rewrite |
-| Query rewriting | Claude Haiku rewrites the query using technical SNN vocabulary when grading rejects all chunks |
-| Fallback | If generation returns "I don't know" (detected by Haiku), retries with plain MMR k=15 (no HyDE, no CrossEncoder) |
+| Document grading | Haiku grades all chunks in one call; decides needs_more_context (bool) and produces missing_aspects as next retrieval query |
+| Retry limit | MAX_RETRIES=2; on retry, missing_aspects used as retrieval query instead of original question |
 
 ## Running locally
 
