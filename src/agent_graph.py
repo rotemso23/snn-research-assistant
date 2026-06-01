@@ -1,46 +1,53 @@
 """
-agent_graph.py — Agentic RAG pipeline using LangGraph (v7 architecture).
+agent_graph.py — Agentic RAG pipeline using LangGraph.
 
-Graph topology (5 nodes, 1 visible back-edge):
-
-    START
-      │
-      ▼
-    [router_node]  ── route_after_router ─── "multi_part" ──► [decompose_node]
-      │                                                               │
-      │ (thesis_specific / conceptual_snn / simple_factual)          │
-      └───────────────────────────────────────────────────────────────┘
-                                                                       │
-                                                                       ▼
-                          ┌──────────────── [retrieve_rerank] ◄────────┘ ◄──┐
-                          │                        │                         │
-                          │                        ▼                         │ need_more=True
-                          │                  [grade_node]                    │ retry_count < 2
-                          │                        │                         │
-                          │              route_after_grade ──────────────────┘
-                          │                        │
-                          │               need_more=False
-                          │                        ▼
-                          │                  [answer_node]
-                          │                        │
-                          │                        ▼
-                          │                       END
-                          │
-                          └─ (decompose_node flows here)
-
-v7 vs v6:
-  - Removed faithfulness_check_node — Haiku/RAGAS score misalignment caused
-    strict-prompt retries to hurt faithfulness rather than help it.
-  - Router: thesis_specific no longer disables HyDE — data showed HyDE improves
-    recall for thesis questions by embedding closer to paper vocabulary.
-  - Only simple_factual disables HyDE and multi_query.
-
-v7 vs v5:
-  router_node     NEW — Haiku classifies query intent; simple_factual disables HyDE/multi_query
-  decompose_node  NEW — Haiku decomposes multi_part questions into sub_queries
-  retrieve_rerank UPDATED — handles sub_queries: fan-out + CrossEncoder merge
-  grade_node      UPDATED — needs_more_context (bool) replaces sufficiency_score threshold
-  MAX_RETRIES     1 → 2
+                          START
+                            │
+                            ▼
+              ┌─────────────────────────┐
+              │       router_node       │  Claude Haiku classifies query intent:
+              │                         │  simple_factual / thesis_specific /
+              │                         │  conceptual_snn / multi_part
+              └────────────┬────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+         multi_part               all other types
+              │                         │
+              ▼                         │
+  ┌─────────────────────────┐           │
+  │      decompose_node     │           │
+  │  Haiku splits into      │           │
+  │  2–3 sub-queries        │           │
+  └────────────┬────────────┘           │
+               │                        │
+               └────────────┬───────────┘
+                            │
+                            ▼
+              ┌─────────────────────────┐◄─────────────────────────────┐
+              │     retrieve_rerank     │  HyDE + Multi-Query + MMR    │
+              └────────────┬────────────┘  + CrossEncoder               │
+                           │               (fan-out if decomposed)      │
+                           ▼                                            │
+              ┌─────────────────────────┐                              │ needs_more=True
+              │       grade_node        │  Haiku selects relevant       │ (missing_aspects
+              │                         │  chunks; decides              │  as new query)
+              │                         │  needs_more_context (bool)    │
+              └────────────┬────────────┘  if yes → missing_aspects    │
+                           │                                            │
+              ┌────────────┴────────────┐                              │
+              │                         │                               │
+      needs_more=True          needs_more=False                        │
+      retry_count < 2          (or budget exhausted)                   │
+              │                         │                               │
+              └─────────────────────────┼───────────────────────────────┘
+                                        │
+                                        ▼
+                          ┌─────────────────────────┐
+                          │      answer_node        │  Claude Sonnet — answers
+                          │                         │  from context only
+                          └────────────┬────────────┘
+                                      END
 """
 
 from typing_extensions import TypedDict
