@@ -57,9 +57,15 @@ def _extract_cited_sources(answer: str, chunks: list[Document]) -> list[str]:
     return sources if sources else list(valid_sources)
 
 
-def generate(question: str, chunks: list[Document]) -> dict:
+def generate(question: str, chunks: list[Document], system_prompt: str | None = None) -> dict:
     """
     Call Claude with retrieved context and return answer + sources.
+
+    Args:
+        question:      The user's question.
+        chunks:        Retrieved context documents.
+        system_prompt: Optional override for SYSTEM_PROMPT. Defaults to the
+                       module-level SYSTEM_PROMPT when not provided.
 
     Returns:
         {"answer": str, "sources": list[str]}
@@ -70,6 +76,7 @@ def generate(question: str, chunks: list[Document]) -> dict:
             "sources": [],
         }
 
+    prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
     context_block = _build_context_block(chunks)
     user_message = f"Context:\n{context_block}\n\nQuestion: {question}"
 
@@ -79,7 +86,7 @@ def generate(question: str, chunks: list[Document]) -> dict:
         system=[
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": prompt,
                 "cache_control": {"type": "ephemeral"},
             }
         ],

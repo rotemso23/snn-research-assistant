@@ -27,17 +27,16 @@ os.chdir(PROJECT_ROOT)
 
 from dotenv import load_dotenv
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from ragas.dataset_schema import SingleTurnSample
 from ragas import EvaluationDataset, evaluate, RunConfig
 from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall  # noqa: deprecated import path; ragas.metrics.collections requires OpenAI-only InstructorLLM
 from ragas.llms import LangchainLLMWrapper
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from langchain_anthropic import ChatAnthropic
-from langchain_huggingface import HuggingFaceEmbeddings
-from src.retriever import retrieve_and_rerank
+from src.retriever import retrieve_and_rerank, _get_embeddings
 from src.generator import generate
 from src.graph import _graph
+from src.agent_graph import _agent_graph
 
 load_dotenv()
 
@@ -90,22 +89,24 @@ EVAL_SET = [
 
 
 def compute_semantic_similarity(answers: list[str], ground_truths: list[str]) -> list[float]:
-    model = SentenceTransformer(EMBEDDING_MODEL)
+    # Reuse the singleton — loading BGE a second time OOMs on this machine
+    model = _get_embeddings()._client  # ._client is the underlying SentenceTransformer
     answer_embeddings = model.encode(answers, normalize_embeddings=True)
     truth_embeddings = model.encode(ground_truths, normalize_embeddings=True)
     similarities = np.sum(answer_embeddings * truth_embeddings, axis=1)
     return similarities.tolist()
 
 
-def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: bool = False) -> dict:
+def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: bool = False, agentic: bool = False) -> dict:
     """Run RAGAS evaluation and return results.
 
     Args:
         use_hyde:    Enable HyDE retrieval expansion.
         multi_query: Enable multi-query retrieval expansion.
-        grading:     If True, run the full LangGraph pipeline so that
-                     grade_documents + rewrite_query are exercised.
-                     Saves to evaluation_results_grading.json.
+        grading:     If True, run the full original CRAG LangGraph pipeline
+                     (grade_documents + rewrite_query). Saves to evaluation_results_grading.json.
+        agentic:     If True, run the new agentic LangGraph pipeline
+                     (retrieve_rerank + agent_node with tool use). Saves to evaluation_results_agentic.json.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -115,7 +116,7 @@ def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: b
         ChatAnthropic(model=CLAUDE_MODEL, api_key=api_key)
     )
     judge_embeddings = LangchainEmbeddingsWrapper(
-        HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        _get_embeddings()   # reuse singleton — loading BGE twice in one process crashes on Windows
     )
     metrics = [
         Faithfulness(llm=judge_llm),
@@ -129,7 +130,7 @@ def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: b
     ground_truths = []
     per_question = []
 
-    mode = f"HyDE={'on' if use_hyde else 'off'}, multi_query={'on' if multi_query else 'off'}" + (", grading=on" if grading else "")
+    mode = f"HyDE={'on' if use_hyde else 'off'}, multi_query={'on' if multi_query else 'off'}" + (", grading=on" if grading else "") + (", agentic=on" if agentic else "")
     print(f"Generating answers for evaluation set ({mode})...")
     for item in EVAL_SET:
         question = item["question"]
@@ -138,7 +139,7 @@ def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: b
         if grading:
             final_state = _graph.invoke({
                 "question":           question,
-                "k":                  7,
+                "k":                  10,
                 "use_hyde":           use_hyde,
                 "multi_query":        multi_query,
                 "retrieval_query":    question,
@@ -150,8 +151,27 @@ def run_evaluation(use_hyde: bool = False, multi_query: bool = False, grading: b
             })
             chunks = final_state["chunks"]
             answer = final_state["answer"]
+        elif agentic:
+            final_state = _agent_graph.invoke({
+                # ── v5 fields (unchanged) ─────────────────────────────────
+                "question":        question,
+                "k":               10,
+                "use_hyde":        use_hyde,
+                "multi_query":     multi_query,
+                "retrieval_query": question,
+                "chunks":          [],
+                "answer":          "",
+                "sources":         [],
+                "need_more":       False,
+                "retry_count":     0,
+                # ── v7 new fields ─────────────────────────────────────────
+                "query_type":  "",
+                "sub_queries": [],
+            })
+            chunks = final_state["chunks"]
+            answer = final_state["answer"]
         else:
-            chunks = retrieve_and_rerank(question, fetch_k=20, top_k=7, use_hyde=use_hyde, multi_query=multi_query)
+            chunks = retrieve_and_rerank(question, fetch_k=35, top_k=10, use_hyde=use_hyde, multi_query=multi_query)
             result = generate(question, chunks)
             answer = result["answer"]
         contexts = [doc.page_content for doc in chunks]
@@ -212,7 +232,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--grading",
         action="store_true",
-        help="Run the full LangGraph pipeline (grade_documents + rewrite_query). Saves to evaluation_results_grading.json.",
+        help="Run the original CRAG LangGraph pipeline (grade_documents + rewrite_query). Saves to evaluation_results_grading.json.",
+    )
+    parser.add_argument(
+        "--agentic",
+        action="store_true",
+        help="Run the new agentic LangGraph pipeline (retrieve_rerank + agent_node with tool use). Saves to evaluation_results_agentic.json.",
     )
     parser.add_argument(
         "--output",
@@ -222,10 +247,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    scores = run_evaluation(use_hyde=args.hyde, multi_query=args.multi_query, grading=args.grading)
+    scores = run_evaluation(use_hyde=args.hyde, multi_query=args.multi_query, grading=args.grading, agentic=args.agentic)
 
     if args.output:
         output_path = args.output
+    elif args.agentic:
+        output_path = "evaluation_results_agentic.json"
     elif args.grading:
         output_path = "evaluation_results_grading.json"
     elif args.hyde and args.multi_query:

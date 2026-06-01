@@ -1,18 +1,21 @@
 """
 pipeline.py — Public API for the SNN RAG pipeline.
 
-Delegates to the LangGraph StateGraph defined in src/graph.py.
+Delegates to the agentic LangGraph StateGraph defined in src/agent_graph.py.
 The ask() signature and return type are identical to the previous version —
 app.py, evaluate.py, and the HuggingFace deployment are untouched.
+
+src/graph.py (the original CRAG pipeline) is kept intact so that
+evaluate.py --grading can still invoke it directly.
 """
 
 from dotenv import load_dotenv
-from src.graph import _graph
+from src.agent_graph import _agent_graph
 
 load_dotenv()
 
 
-def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = True) -> dict:
+def ask(question: str, k: int = 10, use_hyde: bool = True, multi_query: bool = True) -> dict:
     """
     Ask a question over the ingested papers.
 
@@ -29,21 +32,25 @@ def ask(question: str, k: int = 7, use_hyde: bool = True, multi_query: bool = Tr
         {"answer": str, "sources": list[str]}
     """
     initial_state = {
-        "question": question,
-        "k": k,
-        "use_hyde": use_hyde,
-        "multi_query": multi_query,
-        # retrieval_query starts equal to question; rewrite_query may overwrite it
+        # ── v5 fields (unchanged) ─────────────────────────────────────────
+        "question":        question,
+        "k":               k,
+        "use_hyde":        use_hyde,
+        "multi_query":     multi_query,
+        # retrieval_query starts equal to question; grade_node may overwrite with missing_aspects
         "retrieval_query": question,
-        # Remaining fields are populated by graph nodes; initialised here
-        # because LangGraph TypedDict channels have no runtime defaults.
-        "chunks": [],
-        "answer": "",
-        "sources": [],
-        "fallback_attempted": False,
-        "rewrite_attempted": False,
+        # Remaining fields initialised here because LangGraph TypedDict
+        # channels have no runtime defaults.
+        "chunks":          [],
+        "answer":          "",
+        "sources":         [],
+        "need_more":       False,
+        "retry_count":     0,
+        # ── v7 new fields ─────────────────────────────────────────────────
+        "query_type":  "",
+        "sub_queries": [],
     }
-    final_state = _graph.invoke(initial_state)
+    final_state = _agent_graph.invoke(initial_state)
     return {"answer": final_state["answer"], "sources": final_state["sources"]}
 
 

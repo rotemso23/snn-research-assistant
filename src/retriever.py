@@ -25,9 +25,23 @@ HYDE_MODEL = "claude-sonnet-4-6"
 MULTI_QUERY_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_K = 15
 
+_embeddings: HuggingFaceEmbeddings | None = None
 _vectorstore: Chroma | None = None
 _cross_encoder: CrossEncoder | None = None
 _client = anthropic.Anthropic()
+
+
+def _get_embeddings() -> HuggingFaceEmbeddings:
+    """Lazily load and cache the sentence-transformer embedding model.
+
+    Exposed as a singleton so that evaluate.py (RAGAS judge) and the vectorstore
+    can share the same instance — loading the model twice in one process causes a
+    native crash (Windows access violation 0xC0000005) in the PyTorch DLL.
+    """
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    return _embeddings
 
 
 def _get_vectorstore() -> Chroma:
@@ -39,10 +53,9 @@ def _get_vectorstore() -> Chroma:
                 f"ChromaDB not found at '{CHROMA_DIR}'. "
                 "Run `python src/ingest.py --papers_dir papers/` first."
             )
-        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
         _vectorstore = Chroma(
             persist_directory=CHROMA_DIR,
-            embedding_function=embeddings,
+            embedding_function=_get_embeddings(),
         )
     return _vectorstore
 
@@ -157,6 +170,7 @@ def retrieve_and_rerank(
     top_k: int = 5,
     use_hyde: bool = False,
     multi_query: bool = False,
+    force_thesis_boost: bool = False,
 ) -> list[Document]:
     """Retrieve fetch_k chunks with MMR, then rerank with CrossEncoder, return top_k.
 
@@ -164,15 +178,18 @@ def retrieve_and_rerank(
     scoring — more accurate than embedding cosine similarity alone.
 
     Args:
-        query:        The user's original question.
-        fetch_k:      Number of candidates to fetch per query via MMR.
-        top_k:        Number of chunks to return after reranking.
-        use_hyde:     If True, generate a hypothetical answer and use its embedding
-                      for the MMR search instead of the raw question embedding.
-                      The CrossEncoder always uses the original query.
-        multi_query:  If True, generate 2 alternative phrasings and retrieve
-                      candidates for all 3 queries. The merged pool (deduplicated)
-                      is reranked together — widens coverage for hard retrieval cases.
+        query:               The user's original question.
+        fetch_k:             Number of candidates to fetch per query via MMR.
+        top_k:               Number of chunks to return after reranking.
+        use_hyde:            If True, generate a hypothetical answer and use its embedding
+                             for the MMR search instead of the raw question embedding.
+                             The CrossEncoder always uses the original query.
+        multi_query:         If True, generate 2 alternative phrasings and retrieve
+                             candidates for all 3 queries. The merged pool (deduplicated)
+                             is reranked together — widens coverage for hard retrieval cases.
+        force_thesis_boost:  If True, apply the thesis-source boost regardless of whether
+                             the query contains thesis keywords. Set by the agent when
+                             router_node classified the question as thesis_specific.
     """
     if multi_query:
         queries = [query] + _generate_query_variants(query, n=2)
@@ -188,41 +205,25 @@ def retrieve_and_rerank(
         retrieval_query = _generate_hypothetical_answer(query) if use_hyde else query
         candidates = retrieve(retrieval_query, k=fetch_k)
 
-    # When the query is clearly about the thesis itself, guarantee thesis chunks
-    # are in the candidate pool — generic MMR often fills the pool with other papers.
+    # When the query is about the thesis itself, expand the candidate pool with
+    # thesis-sourced chunks — generic MMR often fills the pool with other papers.
+    # The CrossEncoder then ranks all candidates fairly; no pinning needed because
+    # relevant thesis chunks will naturally score into the top-k.
     query_lower = query.lower()
-    thesis_guaranteed: list[Document] = []
-    if any(kw in query_lower for kw in _THESIS_KEYWORDS):
+    if force_thesis_boost or any(kw in query_lower for kw in _THESIS_KEYWORDS):
         seen_keys = {doc.page_content[:200] for doc in candidates}
-        thesis_boost = retrieve_from_source(query, "thesis", k=10)
-        for doc in thesis_boost:
+        for doc in retrieve_from_source(query, "thesis", k=10):
             key = doc.page_content[:200]
             if key not in seen_keys:
                 candidates.append(doc)
                 seen_keys.add(key)
-        # Pin the top-3 thesis chunks into the final result so the CrossEncoder
-        # cannot displace them entirely in favour of other papers.
-        thesis_guaranteed = thesis_boost[:3]
 
     ce = _get_cross_encoder()
     # Always rerank against the original question, not the hypothetical.
     pairs = [[query, doc.page_content] for doc in candidates]
     scores = ce.predict(pairs)
     ranked = sorted(zip(scores, candidates), key=lambda x: x[0], reverse=True)
-    top = [doc for _, doc in ranked[:top_k]]
-
-    # Merge guaranteed thesis chunks: add any that didn't make the cut, replacing
-    # the lowest-ranked slots so total count stays at top_k.
-    if thesis_guaranteed:
-        top_keys = {doc.page_content[:200] for doc in top}
-        for doc in thesis_guaranteed:
-            if doc.page_content[:200] not in top_keys and len(top) >= top_k:
-                top.pop()  # drop lowest-ranked (last after sort)
-            if doc.page_content[:200] not in top_keys:
-                top.append(doc)
-                top_keys.add(doc.page_content[:200])
-
-    return top
+    return [doc for _, doc in ranked[:top_k]]
 
 
 if __name__ == "__main__":

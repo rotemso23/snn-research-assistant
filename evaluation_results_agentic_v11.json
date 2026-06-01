@@ -1,0 +1,89 @@
+{
+  "semantic_similarity": 0.8555,
+  "faithfulness": 0.9459,
+  "answer_relevancy": 0.9394,
+  "context_precision": 0.874,
+  "context_recall": 0.75,
+  "per_question": [
+    {
+      "question": "What is the main goal of the thesis?",
+      "semantic_similarity": 0.8833,
+      "faithfulness": 1.0,
+      "answer_relevancy": 1.0,
+      "context_precision": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "question": "What spiking neuron model is used in the thesis?",
+      "semantic_similarity": 0.9373,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.8893,
+      "context_precision": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "question": "What is the key advantage of spiking neural networks over traditional ANNs?",
+      "semantic_similarity": 0.8728,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9725,
+      "context_precision": 1.0,
+      "context_recall": 0.5
+    },
+    {
+      "question": "What models were proposed in the thesis?",
+      "semantic_similarity": 0.7608,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9428,
+      "context_precision": 1.0,
+      "context_recall": 0.5
+    },
+    {
+      "question": "What datasets are used for evaluation?",
+      "semantic_similarity": 0.7365,
+      "faithfulness": 0.9375,
+      "answer_relevancy": 0.886,
+      "context_precision": 0.5,
+      "context_recall": 0.0
+    },
+    {
+      "question": "What is the role of the membrane potential in a spiking neuron?",
+      "semantic_similarity": 0.8572,
+      "faithfulness": 0.8462,
+      "answer_relevancy": 0.9851,
+      "context_precision": 0.7345,
+      "context_recall": 1.0
+    },
+    {
+      "question": "Why is energy efficiency important for AI models?",
+      "semantic_similarity": 0.8956,
+      "faithfulness": 0.8,
+      "answer_relevancy": 1.0,
+      "context_precision": 0.9167,
+      "context_recall": 1.0
+    },
+    {
+      "question": "What biological principles inspire the proposed models?",
+      "semantic_similarity": 0.8509,
+      "faithfulness": 0.9375,
+      "answer_relevancy": 0.9825,
+      "context_precision": 1.0,
+      "context_recall": 1.0
+    },
+    {
+      "question": "What is the Boltzmann distribution and how does it relate to the thesis?",
+      "semantic_similarity": 0.8691,
+      "faithfulness": 0.9375,
+      "answer_relevancy": 0.9757,
+      "context_precision": 1.0,
+      "context_recall": 0.5
+    },
+    {
+      "question": "What problem does this thesis address in the context of neuromorphic computing?",
+      "semantic_similarity": 0.8916,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.7603,
+      "context_precision": 0.5889,
+      "context_recall": 1.0
+    }
+  ]
+}
