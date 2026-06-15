@@ -51,7 +51,14 @@ def ask(question: str, k: int = 10, use_hyde: bool = True, multi_query: bool = T
         "sub_queries": [],
     }
     final_state = _agent_graph.invoke(initial_state)
-    return {"answer": final_state["answer"], "sources": final_state["sources"]}
+    return {
+        "answer":      final_state["answer"],
+        "sources":     final_state["sources"],
+        # Pipeline internals — for optional UI display
+        "query_type":  final_state.get("query_type", ""),
+        "retry_count": final_state.get("retry_count", 0),
+        "sub_queries": final_state.get("sub_queries", []),
+    }
 
 
 if __name__ == "__main__":

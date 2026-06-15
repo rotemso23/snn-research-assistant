@@ -69,6 +69,16 @@ if submitted and question.strip():
     st.markdown("### Answer")
     st.write(result["answer"])
 
+    with st.expander("🔍 Pipeline internals"):
+        col1, col2 = st.columns(2)
+        col1.metric("Route", result.get("query_type") or "—")
+        col2.metric("Retries", f"{result.get('retry_count', 0)} / {2}")
+        sub_queries = result.get("sub_queries", [])
+        if sub_queries:
+            st.markdown("**Sub-queries**")
+            for i, q in enumerate(sub_queries, 1):
+                st.markdown(f"{i}. {q}")
+
     if result["sources"]:
         st.markdown("### Sources")
         for source in result["sources"]:
