@@ -21,16 +21,16 @@ with st.sidebar:
     st.title("About")
     st.markdown(
         """
-        **SNN Research Assistant** is a RAG (Retrieval-Augmented Generation) pipeline
+        **SNN Research Assistant** is an agentic RAG (Retrieval-Augmented Generation) pipeline
         built over academic papers on Spiking Neural Networks and neuromorphic computing.
 
         **Stack:**
         - LangGraph + LangChain + ChromaDB
-        - HuggingFace sentence-transformers
+        - HuggingFace (BGE embeddings + CrossEncoder reranker)
         - Claude API (Anthropic)
         - Streamlit
 
-        Ask questions grounded in the ingested papers — answers include source citations.
+        Ask a question — the assistant searches the papers and returns a cited answer.
         """
     )
 
@@ -44,7 +44,7 @@ def load_pipeline():
 
 # --- Main UI ---
 st.title("🧠 SNN Research Assistant")
-st.caption("Ask questions about Spiking Neural Networks, grounded in your papers.")
+st.caption("Powered by agentic RAG — ask anything about SNNs and neuromorphic computing.")
 
 if not os.getenv("ANTHROPIC_API_KEY"):
     st.error(

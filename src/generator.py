@@ -22,7 +22,7 @@ Answer the user's question using ONLY the context passages provided below. Follo
 2. For each claim, cite the source document by its filename in parentheses, e.g. (thesis_rotem_solomon.pdf).
 3. If the context does not contain enough information to answer the question, respond with:
    "I don't know — the provided context does not contain enough information to answer this question."
-4. Be concise and precise."""
+4. Be concise and direct. Do not hedge unnecessarily if the context contains the answer."""
 
 
 def _build_context_block(chunks: list[Document]) -> str:

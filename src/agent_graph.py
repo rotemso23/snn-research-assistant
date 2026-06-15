@@ -227,12 +227,6 @@ GRADE_SYSTEM_PROMPT = (
     "Call grade_context with the relevant indices, your decision, and optionally missing_aspects."
 )
 
-# Extends generator.py's SYSTEM_PROMPT — rule 4 tightened: concise + no unnecessary hedging
-AGENT_ANSWER_SYSTEM_PROMPT = SYSTEM_PROMPT.rstrip().replace(
-    "4. Be concise and precise.",
-    "4. Be concise and direct. Do not hedge unnecessarily if the context contains the answer.",
-)
-
 
 # ── Node functions ────────────────────────────────────────────────────────────
 
@@ -365,7 +359,7 @@ def retrieve_rerank_node(state: AgentState) -> dict:
         return {"chunks": chunks}
 
     # Standard path (v5 behaviour)
-    chunks = retrieve_and_rerank(
+    new_chunks = retrieve_and_rerank(
         state["retrieval_query"],
         fetch_k=35,
         top_k=state["k"],
@@ -373,7 +367,17 @@ def retrieve_rerank_node(state: AgentState) -> dict:
         multi_query=state["multi_query"],
         force_thesis_boost=force_boost,
     )
-    return {"chunks": chunks}
+
+    # On retries, accumulate previously graded relevant chunks so the grader
+    # sees the full picture and the generator isn't left with only the last pass.
+    # Guard: retry_count > 0 ensures state["chunks"] holds graded (not raw) chunks.
+    if retry_count > 0:
+        prev_chunks = state.get("chunks", [])
+        seen = {c.page_content[:200] for c in new_chunks}
+        merged = new_chunks + [c for c in prev_chunks if c.page_content[:200] not in seen]
+        return {"chunks": merged}
+
+    return {"chunks": new_chunks}
 
 
 def grade_node(state: AgentState) -> dict:
@@ -471,7 +475,7 @@ def answer_node(state: AgentState) -> dict:
     result = generate(
         state["question"],
         state["chunks"],
-        system_prompt=AGENT_ANSWER_SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT,
     )
     return {"answer": result["answer"], "sources": result["sources"]}
 
