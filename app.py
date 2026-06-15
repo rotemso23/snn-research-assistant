@@ -72,7 +72,7 @@ if submitted and question.strip():
     with st.expander("🔍 Pipeline internals"):
         col1, col2 = st.columns(2)
         col1.metric("Route", result.get("query_type") or "—")
-        col2.metric("Retries", f"{result.get('retry_count', 0)} / {2}")
+        col2.metric("Attempts", f"{result.get('retry_count', 0) + 1} / 3")
         sub_queries = result.get("sub_queries", [])
         if sub_queries:
             st.markdown("**Sub-queries**")
