@@ -45,6 +45,11 @@ def load_pipeline():
 # --- Main UI ---
 st.title("🧠 SNN Research Assistant")
 st.caption("Powered by agentic RAG — ask anything about SNNs and neuromorphic computing.")
+st.info(
+    "⏳ **Heads up:** this Space runs on CPU, so a full query — including retrieval and reranking — "
+    "typically takes **20–40 seconds**. Thanks for your patience!",
+    icon=None,
+)
 
 if not os.getenv("ANTHROPIC_API_KEY"):
     st.error(
